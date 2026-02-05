@@ -17,7 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy Python project
 COPY pyproject.toml ./
+COPY README.md ./
 COPY app/ ./app/
+COPY scripts/ ./scripts/
 COPY admin_portal/backend/ ./admin_portal/backend/
 
 # Install Python dependencies

@@ -1,130 +1,71 @@
 # OpenAI API Convertor
 
-OpenAI-compatible API proxy for AWS Bedrock Claude models. Use your existing OpenAI SDK code with AWS Bedrock.
+OpenAI-compatible API proxy for AWS Bedrock Claude models.
 
-## Quick Start
+## Features
+
+- OpenAI v1 compatible API (`/v1/chat/completions`, `/v1/models`)
+- Support Claude models on Bedrock (Opus 4.5, Sonnet 4.5, Haiku 4.5, Claude 3.5 Haiku)
+- Streaming support
+- Vision (image input)
+- Tool/Function calling
+- Extended thinking
+- API key authentication & rate limiting
+- Usage tracking with DynamoDB
+- Admin Portal for management
+
+## Quick Start (Local Docker)
+
+```bash
+# Start services
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f api
+
+# Test API
+curl http://localhost:8000/health
+curl http://localhost:8000/v1/models
+```
+
+## API Usage
 
 ```python
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://your-proxy.com/v1",
-    api_key="your-api-key"
+    base_url="http://localhost:8000/v1",
+    api_key="test-key"
 )
 
 response = client.chat.completions.create(
-    model="claude-sonnet-4-5-20250929",
+    model="claude-sonnet-4-5",
     messages=[{"role": "user", "content": "Hello!"}]
 )
 print(response.choices[0].message.content)
 ```
 
-## Features
+## Model Mapping
 
-- ✅ OpenAI Chat Completions API compatible
-- ✅ Streaming support
-- ✅ Vision (image input)
-- ✅ Tool/Function calling
-- ✅ Extended thinking
-- ✅ API key authentication
-- ✅ Rate limiting
-- ✅ Usage tracking
+| OpenAI Model ID | Bedrock Model ID |
+|-----------------|------------------|
+| claude-opus-4-5 | anthropic.claude-opus-4-5-20251101-v1:0 |
+| claude-sonnet-4-5 | anthropic.claude-sonnet-4-5-20250929-v1:0 |
+| claude-haiku-4-5 | anthropic.claude-haiku-4-5-20251001-v1:0 |
+| claude-3-5-haiku | anthropic.claude-3-5-haiku-20241022-v1:0 |
 
-## Supported Models
+## Deployment
 
-| Model ID | Bedrock Model |
-|----------|---------------|
-| claude-opus-4-5-20251101 | global.anthropic.claude-opus-4-5-20251101-v1:0 |
-| claude-sonnet-4-5-20250929 | global.anthropic.claude-sonnet-4-5-20250929-v1:0 |
-| claude-haiku-4-5-20251001 | global.anthropic.claude-haiku-4-5-20251001-v1:0 |
-| claude-3-5-haiku-20241022 | us.anthropic.claude-3-5-haiku-20241022-v1:0 |
+See `cdk/` for AWS ECS deployment with CDK.
 
-## Local Development
+## Environment Variables
 
-### Option 1: Direct Run
-
-```bash
-# Install
-pip install -e .
-
-# Configure
-cp env.example .env
-# Edit .env with your AWS credentials
-
-# Run
-uvicorn app.main:app --reload --port 8000
-```
-
-### Option 2: Docker Compose
-
-```bash
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f api
-
-# Stop
-docker-compose down
-```
-
-Services:
-- API: http://localhost:8000
-- DynamoDB Admin: http://localhost:8002
-
-### Test
-
-```bash
-# Health check
-curl http://localhost:8000/health
-
-# Chat completion
-curl http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test-key" \
-  -d '{
-    "model": "claude-sonnet-4-5-20250929",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
-
-## Deploy to AWS
-
-```bash
-cd cdk
-npm install
-
-# Dev environment
-./scripts/deploy.sh -e dev -p arm64
-
-# Prod environment
-./scripts/deploy.sh -e prod -p arm64
-```
-
-## API Reference
-
-### POST /v1/chat/completions
-
-OpenAI-compatible chat completion endpoint.
-
-### GET /v1/models
-
-List available models.
-
-### GET /health
-
-Health check endpoint.
-
-## Configuration
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| AWS_REGION | us-west-2 | AWS region |
-| REQUIRE_API_KEY | true | Require API key authentication |
-| MASTER_API_KEY | - | Master API key for admin access |
-| RATE_LIMIT_ENABLED | true | Enable rate limiting |
-| RATE_LIMIT_REQUESTS | 100 | Requests per window |
-| RATE_LIMIT_WINDOW | 60 | Window in seconds |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| AWS_REGION | AWS region | us-west-2 |
+| REQUIRE_API_KEY | Enable API key auth | false |
+| MASTER_API_KEY | Master API key | - |
+| RATE_LIMIT_ENABLED | Enable rate limiting | false |
 
 ## License
 

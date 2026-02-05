@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   api:
     build: .
@@ -7,8 +5,8 @@ services:
       - "8000:8000"
     environment:
       - AWS_REGION=${AWS_REGION:-us-west-2}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-local}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-local}
       - DYNAMODB_ENDPOINT_URL=http://dynamodb-local:8000
       - DYNAMODB_API_KEYS_TABLE=openai-proxy-api-keys
       - DYNAMODB_USAGE_TABLE=openai-proxy-usage
@@ -60,6 +58,26 @@ services:
       - AWS_ACCESS_KEY_ID=local
       - AWS_SECRET_ACCESS_KEY=local
       - DYNAMODB_ENDPOINT_URL=http://dynamodb-local:8000
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    networks:
+      - proxy-network
+
+  admin-portal:
+    build:
+      context: .
+      dockerfile: admin_portal/Dockerfile
+    ports:
+      - "8005:8005"
+    environment:
+      - AWS_REGION=${AWS_REGION:-us-west-2}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-local}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-local}
+      - DYNAMODB_ENDPOINT_URL=http://dynamodb-local:8000
+      - DYNAMODB_API_KEYS_TABLE=openai-proxy-api-keys
+      - DYNAMODB_USAGE_TABLE=openai-proxy-usage
+      - DYNAMODB_PRICING_TABLE=openai-proxy-pricing
     depends_on:
       dynamodb-local:
         condition: service_healthy
