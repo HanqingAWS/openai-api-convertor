@@ -6,13 +6,18 @@ set -e
 echo "=== 1. 安装 Docker ==="
 sudo yum update -y
 sudo yum install -y docker git
-sudo systemctl start docker
+sudo service docker start
 sudo systemctl enable docker
-sudo usermod -aG docker $USER
+sudo usermod -a -G docker ec2-user
 
 echo "=== 2. 安装 Docker Compose ==="
-sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-sudo chmod +x /usr/local/bin/docker-compose
+# 安装 Docker Compose 插件
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+# 同时创建传统命令的软链接
+sudo ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
 
 echo "=== 3. 验证安装 ==="
 docker --version
