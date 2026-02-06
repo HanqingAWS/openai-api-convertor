@@ -28,6 +28,12 @@ DEFAULT_PRICING = [
         description="Claude Opus 4.5",
     ),
     ModelPricing(
+        model_id="claude-opus-4-6",
+        input_price_per_1k=0.015,
+        output_price_per_1k=0.075,
+        description="Claude Opus 4.6",
+    ),
+    ModelPricing(
         model_id="claude-sonnet-4-5-20250929",
         input_price_per_1k=0.003,
         output_price_per_1k=0.015,
