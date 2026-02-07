@@ -5,8 +5,7 @@ services:
       - "8000:8000"
     environment:
       - AWS_REGION=${AWS_REGION:-us-west-2}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-local}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-local}
+      # For DynamoDB local access only (Bedrock uses EC2 IAM Role)
       - DYNAMODB_ENDPOINT_URL=http://dynamodb-local:8000
       - DYNAMODB_API_KEYS_TABLE=openai-proxy-api-keys
       - DYNAMODB_USAGE_TABLE=openai-proxy-usage
