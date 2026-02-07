@@ -10,10 +10,10 @@ FROM node:20-slim AS frontend-builder
 WORKDIR /build
 
 # Copy frontend package files
-COPY admin_portal/frontend/package.json admin_portal/frontend/package-lock.json ./
+COPY admin_portal/frontend/package.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies (use npm install since we may not have lock file)
+RUN npm install
 
 # Copy frontend source
 COPY admin_portal/frontend/ ./
