@@ -38,4 +38,6 @@ new ECSStack(app, `OpenAIProxy-ECS-${config.environmentName}`, {
   apiKeysTable: dynamodbStack.apiKeysTable,
   usageTable: dynamodbStack.usageTable,
   modelMappingTable: dynamodbStack.modelMappingTable,
+  pricingTable: dynamodbStack.pricingTable,
+  usageStatsTable: dynamodbStack.usageStatsTable,
 });
