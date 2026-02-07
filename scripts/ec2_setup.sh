@@ -10,9 +10,18 @@ sudo service docker start
 sudo systemctl enable docker
 sudo usermod -a -G docker ec2-user
 
-echo "=== 2. 安装 Docker Compose ==="
-# 安装 Docker Compose 插件
+echo "=== 2. 安装 Docker Buildx ==="
+# 安装 Docker Buildx 插件
 sudo mkdir -p /usr/local/lib/docker/cli-plugins
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ]; then
+    ARCH="arm64"
+fi
+sudo curl -SL "https://github.com/docker/buildx/releases/latest/download/buildx-v0.21.1.linux-${ARCH}" -o /usr/local/lib/docker/cli-plugins/docker-buildx
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+
+echo "=== 3. 安装 Docker Compose ==="
+# 安装 Docker Compose 插件
 sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose
 sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 

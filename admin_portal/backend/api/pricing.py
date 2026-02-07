@@ -1,141 +1,196 @@
-"""Pricing management API endpoints."""
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+"""Model Pricing management routes."""
+import sys
+from pathlib import Path
+from typing import Optional
 
-from app.core.config import settings
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+from fastapi import APIRouter, HTTPException, Query, status
+
+from app.db.dynamodb import DynamoDBClient, ModelPricingManager
+from admin_portal.backend.schemas.pricing import (
+    PricingCreate,
+    PricingUpdate,
+    PricingResponse,
+    PricingListResponse,
+)
 
 router = APIRouter()
 
 
-class ModelPricing(BaseModel):
-    model_id: str
-    input_price_per_1k: float  # USD per 1K tokens
-    output_price_per_1k: float
-    description: Optional[str] = None
-
-
-class PricingListResponse(BaseModel):
-    pricing: List[ModelPricing]
-
-
-# Default pricing (based on Bedrock Claude pricing)
-DEFAULT_PRICING = [
-    ModelPricing(
-        model_id="claude-opus-4-5-20251101",
-        input_price_per_1k=0.015,
-        output_price_per_1k=0.075,
-        description="Claude Opus 4.5",
-    ),
-    ModelPricing(
-        model_id="claude-opus-4-6",
-        input_price_per_1k=0.015,
-        output_price_per_1k=0.075,
-        description="Claude Opus 4.6",
-    ),
-    ModelPricing(
-        model_id="claude-sonnet-4-5-20250929",
-        input_price_per_1k=0.003,
-        output_price_per_1k=0.015,
-        description="Claude Sonnet 4.5",
-    ),
-    ModelPricing(
-        model_id="claude-haiku-4-5-20251001",
-        input_price_per_1k=0.0008,
-        output_price_per_1k=0.004,
-        description="Claude Haiku 4.5",
-    ),
-    ModelPricing(
-        model_id="claude-3-5-haiku-20241022",
-        input_price_per_1k=0.0008,
-        output_price_per_1k=0.004,
-        description="Claude 3.5 Haiku",
-    ),
-]
+def get_manager():
+    """Get ModelPricingManager instance."""
+    db_client = DynamoDBClient()
+    return ModelPricingManager(db_client)
 
 
 @router.get("", response_model=PricingListResponse)
-async def list_pricing(request: Request):
-    """List all model pricing."""
-    dynamodb_client = getattr(request.app.state, "dynamodb_client", None)
-    
-    if not dynamodb_client:
-        return PricingListResponse(pricing=DEFAULT_PRICING)
-
-    try:
-        # Try to get pricing from DynamoDB
-        table_name = f"openai-proxy-model-pricing-{settings.environment}"
-        response = dynamodb_client.client.scan(TableName=table_name)
-        
-        pricing = []
-        for item in response.get("Items", []):
-            pricing.append(ModelPricing(
-                model_id=item.get("model_id", {}).get("S", ""),
-                input_price_per_1k=float(item.get("input_price_per_1k", {}).get("N", "0")),
-                output_price_per_1k=float(item.get("output_price_per_1k", {}).get("N", "0")),
-                description=item.get("description", {}).get("S"),
-            ))
-        
-        if not pricing:
-            return PricingListResponse(pricing=DEFAULT_PRICING)
-            
-        return PricingListResponse(pricing=pricing)
-        
-    except Exception:
-        return PricingListResponse(pricing=DEFAULT_PRICING)
-
-
-@router.put("/{model_id}")
-async def update_pricing(
-    model_id: str,
-    pricing: ModelPricing,
-    request: Request,
+async def list_pricing(
+    limit: int = Query(default=50, ge=1, le=100),
+    provider: Optional[str] = Query(default=None),
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    search: Optional[str] = Query(default=None),
 ):
-    """Update model pricing."""
-    dynamodb_client = getattr(request.app.state, "dynamodb_client", None)
-    
-    if not dynamodb_client:
-        raise HTTPException(status_code=503, detail="Database not available")
+    """
+    List all model pricing with pagination and filtering.
 
-    try:
-        table_name = f"openai-proxy-model-pricing-{settings.environment}"
-        dynamodb_client.client.put_item(
-            TableName=table_name,
-            Item={
-                "model_id": {"S": model_id},
-                "input_price_per_1k": {"N": str(pricing.input_price_per_1k)},
-                "output_price_per_1k": {"N": str(pricing.output_price_per_1k)},
-                "description": {"S": pricing.description or ""},
-            },
+    Args:
+        limit: Maximum number of items to return (1-100)
+        provider: Filter by provider name
+        status_filter: Filter by status ('active', 'deprecated', 'disabled')
+        search: Search term for filtering by model ID
+    """
+    pricing_manager = get_manager()
+
+    result = pricing_manager.list_all_pricing(
+        limit=limit,
+        provider_filter=provider,
+        status_filter=status_filter,
+    )
+
+    items = result.get("items", [])
+
+    # Apply search filter if provided
+    if search:
+        search_lower = search.lower()
+        items = [
+            item for item in items
+            if search_lower in item.get("model_id", "").lower()
+            or search_lower in (item.get("display_name") or "").lower()
+        ]
+
+    return PricingListResponse(
+        items=[PricingResponse(**item) for item in items],
+        count=len(items),
+        last_key=result.get("last_key"),
+    )
+
+
+@router.get("/providers")
+async def list_providers():
+    """
+    Get list of unique providers.
+    """
+    pricing_manager = get_manager()
+
+    result = pricing_manager.list_all_pricing(limit=1000)
+    items = result.get("items", [])
+
+    providers = list(set(item.get("provider", "Unknown") for item in items))
+    providers.sort()
+
+    return {"providers": providers}
+
+
+@router.get("/{model_id:path}", response_model=PricingResponse)
+async def get_pricing(model_id: str):
+    """
+    Get pricing for a specific model.
+
+    Args:
+        model_id: The Bedrock model ID
+    """
+    pricing_manager = get_manager()
+
+    item = pricing_manager.get_pricing(model_id)
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Model pricing not found",
         )
-        return {"message": "Pricing updated"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    return PricingResponse(**item)
 
 
-@router.get("/cost-estimate")
-async def estimate_cost(
-    request: Request,
-    prompt_tokens: int = 1000,
-    completion_tokens: int = 500,
-    model_id: str = "claude-sonnet-4-5-20250929",
-):
-    """Estimate cost for given token usage."""
-    # Find pricing for model
-    pricing = next((p for p in DEFAULT_PRICING if p.model_id == model_id), None)
-    
-    if not pricing:
-        raise HTTPException(status_code=404, detail=f"Pricing not found for model: {model_id}")
+@router.post("", response_model=PricingResponse, status_code=status.HTTP_201_CREATED)
+async def create_pricing(request: PricingCreate):
+    """
+    Create new model pricing.
 
-    input_cost = (prompt_tokens / 1000) * pricing.input_price_per_1k
-    output_cost = (completion_tokens / 1000) * pricing.output_price_per_1k
-    total_cost = input_cost + output_cost
+    Args:
+        request: Pricing creation data
+    """
+    pricing_manager = get_manager()
 
-    return {
-        "model_id": model_id,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "input_cost_usd": round(input_cost, 6),
-        "output_cost_usd": round(output_cost, 6),
-        "total_cost_usd": round(total_cost, 6),
-    }
+    # Check if already exists
+    existing = pricing_manager.get_pricing(request.model_id)
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Pricing for this model already exists",
+        )
+
+    item = pricing_manager.create_pricing(
+        model_id=request.model_id,
+        provider=request.provider,
+        display_name=request.display_name,
+        input_price=request.input_price,
+        output_price=request.output_price,
+        cache_read_price=request.cache_read_price,
+        cache_write_price=request.cache_write_price,
+        status=request.status,
+    )
+
+    return PricingResponse(**item)
+
+
+@router.put("/{model_id:path}", response_model=PricingResponse)
+async def update_pricing(model_id: str, request: PricingUpdate):
+    """
+    Update model pricing.
+
+    Args:
+        model_id: The Bedrock model ID
+        request: Fields to update
+    """
+    pricing_manager = get_manager()
+
+    # Check if exists
+    existing = pricing_manager.get_pricing(model_id)
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Model pricing not found",
+        )
+
+    # Update pricing
+    update_data = request.model_dump(exclude_none=True)
+    if update_data:
+        success = pricing_manager.update_pricing(model_id, **update_data)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update pricing",
+            )
+
+    # Return updated pricing
+    item = pricing_manager.get_pricing(model_id)
+    return PricingResponse(**item)
+
+
+@router.delete("/{model_id:path}")
+async def delete_pricing(model_id: str):
+    """
+    Delete model pricing.
+
+    Args:
+        model_id: The Bedrock model ID
+    """
+    pricing_manager = get_manager()
+
+    # Check if exists
+    existing = pricing_manager.get_pricing(model_id)
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Model pricing not found",
+        )
+
+    success = pricing_manager.delete_pricing(model_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete pricing",
+        )
+
+    return {"message": "Pricing deleted successfully"}

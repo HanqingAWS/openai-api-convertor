@@ -1,1 +1,1 @@
-"""Admin Portal API routes."""
+"""API routes package for Admin Portal."""

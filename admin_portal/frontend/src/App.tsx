@@ -1,24 +1,68 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import Layout from './components/Layout'
-import Dashboard from './pages/Dashboard'
-import ApiKeys from './pages/ApiKeys'
-import Pricing from './pages/Pricing'
-import Login from './pages/Login'
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { MainLayout } from './components/Layout';
+import { Login, Dashboard, ApiKeys, Pricing, ModelMapping } from './pages';
+import { useAuth } from './hooks';
 
-function App() {
-  return (
-    <BrowserRouter basename="/admin">
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<Dashboard />} />
-          <Route path="api-keys" element={<ApiKeys />} />
-          <Route path="pricing" element={<Pricing />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
-  )
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { authenticated, authState } = useAuth();
+
+  // Show nothing while checking auth state
+  if (authState === 'idle') {
+    return null;
+  }
+
+  if (!authenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
 }
 
-export default App
+function PublicRoute({ children }: { children: React.ReactNode }) {
+  const { authenticated, authState } = useAuth();
+
+  // Show nothing while checking auth state
+  if (authState === 'idle') {
+    return null;
+  }
+
+  if (authenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+export default function App() {
+  return (
+    <Routes>
+      {/* Public routes */}
+      <Route
+        path="/login"
+        element={
+          <PublicRoute>
+            <Login />
+          </PublicRoute>
+        }
+      />
+
+      {/* Protected routes */}
+      <Route
+        element={
+          <ProtectedRoute>
+            <MainLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/api-keys" element={<ApiKeys />} />
+        <Route path="/pricing" element={<Pricing />} />
+        <Route path="/model-mapping" element={<ModelMapping />} />
+      </Route>
+
+      {/* Default redirect */}
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
+  );
+}
