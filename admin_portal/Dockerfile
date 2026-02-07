@@ -22,25 +22,8 @@ COPY admin_portal/frontend/ ./
 ENV VITE_BASE_PATH=/admin/
 RUN npm run build
 
-# Stage 2: Python Dependencies
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
-
-WORKDIR /build
-
-# Copy the main project's dependency files (admin_portal uses same deps)
-COPY pyproject.toml uv.lock README.md ./
-
-# Copy the main app module (needed for DynamoDB client imports)
-COPY app ./app
-
-# Copy admin_portal backend
-COPY admin_portal/backend ./admin_portal/backend
-
-# Install dependencies
-RUN uv sync --frozen --no-dev
-
-# Stage 3: Final Runtime
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+# Stage 2: Python Backend
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -50,35 +33,23 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd -m -u 1000 -s /bin/bash appuser
-
-# Copy virtual environment from builder
-COPY --from=builder /build/.venv /app/.venv
-
-# Copy project files (needed for package resolution)
-COPY --from=builder /build/pyproject.toml /build/uv.lock /build/README.md /app/
-
-# Copy main app module (needed for DynamoDB client imports)
-COPY --from=builder /build/app /app/app
-
-# Copy admin_portal backend
-COPY --from=builder /build/admin_portal/backend /app/admin_portal/backend
+# Copy project files and install dependencies
+COPY pyproject.toml README.md ./
+COPY app ./app
+COPY scripts ./scripts
+COPY admin_portal/backend ./admin_portal/backend
+RUN pip install --no-cache-dir .
 
 # Copy built frontend from frontend-builder
 COPY --from=frontend-builder /build/dist /app/admin_portal/frontend/dist
 
-# Set ownership
-RUN chown -R appuser:appuser /app
-
-# Switch to non-root user
+# Create non-root user
+RUN useradd -m -u 1000 -s /bin/bash appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Set environment variables
-ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    UV_SYSTEM_PYTHON=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Expose port
 EXPOSE 8005
