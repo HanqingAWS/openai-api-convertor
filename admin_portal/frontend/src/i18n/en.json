@@ -219,7 +219,7 @@
       "createTitle": "Add New Mapping",
       "editTitle": "Edit Mapping",
       "anthropicModelId": "Anthropic Model ID",
-      "anthropicModelIdPlaceholder": "e.g., opus or claude-opus-4-5-20251101",
+      "anthropicModelIdPlaceholder": "e.g., claude-opus-4-5 or claude-sonnet-4-5",
       "bedrockModelId": "Bedrock Model ID",
       "bedrockModelIdPlaceholder": "e.g., global.anthropic.claude-opus-4-5-20251101-v1:0",
       "save": "Save Mapping"

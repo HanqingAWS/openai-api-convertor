@@ -219,7 +219,7 @@
       "createTitle": "添加新映射",
       "editTitle": "编辑映射",
       "anthropicModelId": "Anthropic 模型 ID",
-      "anthropicModelIdPlaceholder": "例如：opus 或 claude-opus-4-5-20251101",
+      "anthropicModelIdPlaceholder": "例如：claude-opus-4-5 或 claude-sonnet-4-5",
       "bedrockModelId": "Bedrock 模型 ID",
       "bedrockModelIdPlaceholder": "例如：global.anthropic.claude-opus-4-5-20251101-v1:0",
       "save": "保存映射"

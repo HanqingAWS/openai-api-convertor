@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 class ModelMappingCreate(BaseModel):
     """Schema for creating a model mapping."""
 
-    anthropic_model_id: str = Field(..., description="Anthropic model ID (e.g., 'opus', 'claude-opus-4-5-20251101')")
+    anthropic_model_id: str = Field(..., description="Anthropic model ID (e.g., 'claude-opus-4-5', 'claude-sonnet-4-5')")
     bedrock_model_id: str = Field(..., description="Bedrock model ARN (e.g., 'global.anthropic.claude-opus-4-5-20251101-v1:0')")
 
 
