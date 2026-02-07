@@ -18,17 +18,17 @@ def main():
     client = DynamoDBClient()
     manager = APIKeyManager(client)
 
-    result = manager.create_api_key(
+    api_key = manager.create_api_key(
         user_id=args.user_id,
         name=args.name,
         rate_limit=args.rate_limit,
     )
 
     print(f"Created API key:")
-    print(f"  API Key: {result['api_key']}")
-    print(f"  User ID: {result['user_id']}")
-    print(f"  Name: {result['name']}")
-    print(f"  Rate Limit: {result['rate_limit']}/min")
+    print(f"  API Key: {api_key}")
+    print(f"  User ID: {args.user_id}")
+    print(f"  Name: {args.name}")
+    print(f"  Rate Limit: {args.rate_limit}/min")
 
 
 if __name__ == "__main__":

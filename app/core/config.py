@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     dynamodb_model_mapping_table: str = Field(
         default="openai-proxy-model-mapping", alias="DYNAMODB_MODEL_MAPPING_TABLE"
     )
+    dynamodb_pricing_table: str = Field(
+        default="openai-proxy-pricing", alias="DYNAMODB_PRICING_TABLE"
+    )
+    dynamodb_usage_stats_table: str = Field(
+        default="openai-proxy-usage-stats", alias="DYNAMODB_USAGE_STATS_TABLE"
+    )
 
     # Authentication
     api_key_header: str = Field(default="x-api-key", alias="API_KEY_HEADER")
