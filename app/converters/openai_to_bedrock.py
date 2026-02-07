@@ -180,7 +180,8 @@ class OpenAIToBedrockConverter:
             config["maxTokens"] = request.max_tokens
         if request.temperature is not None:
             config["temperature"] = min(request.temperature, 1.0)  # Bedrock max is 1.0
-        if request.top_p is not None:
+        elif request.top_p is not None:
+            # Claude doesn't allow both temperature and top_p
             config["topP"] = request.top_p
         if request.stop:
             stops = request.stop if isinstance(request.stop, list) else [request.stop]
