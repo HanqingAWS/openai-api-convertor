@@ -29,4 +29,14 @@ async def get_model(
     api_key_info: dict = Depends(get_api_key_info),
 ):
     """Get model details."""
-    return Model(id=model_id, owned_by="anthropic")
+    return Model(
+        id=model_id,
+        owned_by="anthropic",
+        capabilities={
+            "vision": True,
+            "tool_use": True,
+            "function_calling": True,
+            "extended_thinking": True,
+            "streaming": True,
+        },
+    )

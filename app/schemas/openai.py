@@ -140,6 +140,7 @@ class Model(BaseModel):
     object: Literal["model"] = "model"
     created: int = Field(default_factory=lambda: int(time.time()))
     owned_by: str = "anthropic"
+    capabilities: Optional[Dict[str, Any]] = None
 
 
 class ModelList(BaseModel):

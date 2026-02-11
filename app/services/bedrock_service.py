@@ -105,5 +105,12 @@ class BedrockService:
                 "object": "model",
                 "created": 1700000000,
                 "owned_by": "anthropic",
+                "capabilities": {
+                    "vision": settings.enable_vision,
+                    "tool_use": settings.enable_tool_use,
+                    "function_calling": settings.enable_tool_use,
+                    "extended_thinking": settings.enable_extended_thinking,
+                    "streaming": True,
+                },
             })
         return models
