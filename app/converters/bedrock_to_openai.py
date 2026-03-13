@@ -214,6 +214,37 @@ class BedrockToOpenAIConverter:
                 ],
             )
             events.append(f"data: {chunk.model_dump_json()}\n\n")
-            events.append("data: [DONE]\n\n")
+            # Note: [DONE] is appended by the caller after optional usage chunk
+
+        # Metadata event (contains usage)
+        elif "metadata" in event:
+            # Usage is extracted by the caller via extract_stream_usage()
+            pass
 
         return events
+
+    def extract_stream_usage(self, event: Dict[str, Any]) -> Optional[Dict[str, int]]:
+        """Extract usage data from a metadata stream event."""
+        if "metadata" not in event:
+            return None
+        metadata = event["metadata"]
+        usage = metadata.get("usage", {})
+        if not usage:
+            return None
+        return {
+            "prompt_tokens": usage.get("inputTokens", 0),
+            "completion_tokens": usage.get("outputTokens", 0),
+            "total_tokens": usage.get("totalTokens", 0),
+        }
+
+    def build_usage_chunk(
+        self, request_id: str, model: str, usage_data: Dict[str, int]
+    ) -> str:
+        """Build a final SSE chunk containing usage statistics."""
+        chunk = ChatCompletionChunk(
+            id=request_id,
+            model=model,
+            choices=[],
+            usage=Usage(**usage_data),
+        )
+        return f"data: {chunk.model_dump_json()}\n\n"

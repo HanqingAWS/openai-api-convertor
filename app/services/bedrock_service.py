@@ -68,8 +68,17 @@ class BedrockService:
     async def chat_completion_stream(
         self, request: ChatCompletionRequest, request_id: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
-        """Handle streaming chat completion."""
+        """Handle streaming chat completion.
+
+        Yields SSE strings. If stream_options.include_usage is True,
+        a final chunk with usage is emitted before [DONE].
+        The last yielded item may be a special "__usage__:..." line for internal tracking.
+        """
         request_id = request_id or f"chatcmpl-{uuid4().hex[:24]}"
+        include_usage = (
+            request.stream_options
+            and request.stream_options.include_usage
+        )
 
         try:
             bedrock_request = self.openai_to_bedrock.convert_request(request)
@@ -78,7 +87,14 @@ class BedrockService:
             response = self.client.converse_stream(modelId=model_id, **bedrock_request)
 
             current_index = 0
+            usage_data = None
+
             for event in response.get("stream", []):
+                # Check for usage in metadata event
+                extracted = self.bedrock_to_openai.extract_stream_usage(event)
+                if extracted:
+                    usage_data = extracted
+
                 sse_events = self.bedrock_to_openai.convert_stream_event(
                     event, request.model, request_id, current_index
                 )
@@ -89,12 +105,28 @@ class BedrockService:
                 if "contentBlockStart" in event:
                     current_index += 1
 
+            # After all events, emit usage chunk if requested
+            if include_usage and usage_data:
+                yield self.bedrock_to_openai.build_usage_chunk(
+                    request_id, request.model, usage_data
+                )
+
+            # Always emit [DONE]
+            yield "data: [DONE]\n\n"
+
+            # Emit internal usage marker for UsageTracker (not sent to client)
+            if usage_data:
+                yield f"__usage__:{json.dumps(usage_data)}"
+
         except self.client.exceptions.ValidationException as e:
             yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'validation_error'}})}\n\n"
+            yield "data: [DONE]\n\n"
         except self.client.exceptions.ThrottlingException as e:
             yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'rate_limit_error'}})}\n\n"
+            yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'server_error'}})}\n\n"
+            yield "data: [DONE]\n\n"
 
     def list_models(self) -> list[Dict[str, Any]]:
         """List available models."""

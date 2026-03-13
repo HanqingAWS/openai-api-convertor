@@ -4,6 +4,26 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field
 
 
+# Stream options
+class StreamOptions(BaseModel):
+    include_usage: Optional[bool] = False
+
+
+# Response format
+class JsonSchema(BaseModel):
+    name: str
+    strict: Optional[bool] = None
+    schema_: Optional[Dict[str, Any]] = Field(default=None, alias="schema")
+
+    class Config:
+        populate_by_name = True
+
+
+class ResponseFormat(BaseModel):
+    type: Literal["text", "json_object", "json_schema"] = "text"
+    json_schema: Optional[JsonSchema] = None
+
+
 # Message content types
 class TextContent(BaseModel):
     type: Literal["text"] = "text"
@@ -76,6 +96,12 @@ class ChatCompletionRequest(BaseModel):
     tools: Optional[List[Tool]] = None
     tool_choice: Optional[Union[Literal["none", "auto", "required"], Dict[str, Any]]] = None
     user: Optional[str] = None
+    # Structured output
+    response_format: Optional[ResponseFormat] = None
+    # Stream options
+    stream_options: Optional[StreamOptions] = None
+    # Reasoning effort (OpenAI standard)
+    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None
     # Extended thinking (custom extension)
     thinking: Optional[Dict[str, Any]] = Field(default=None, alias="thinking")
 
@@ -132,6 +158,7 @@ class ChatCompletionChunk(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
     model: str
     choices: List[StreamChoice]
+    usage: Optional[Usage] = None
 
 
 # Models API

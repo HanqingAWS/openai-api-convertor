@@ -1,4 +1,5 @@
 """Chat completions API endpoint."""
+import json
 import time
 from typing import Optional
 from uuid import uuid4
@@ -125,12 +126,21 @@ async def _stream_response(
 
     try:
         async for chunk in bedrock_service.chat_completion_stream(request_data, request_id):
+            # Internal usage marker — extract but don't send to client
+            if chunk.startswith("__usage__:"):
+                try:
+                    usage_data = json.loads(chunk[len("__usage__:"):])
+                    prompt_tokens = usage_data.get("prompt_tokens", 0)
+                    completion_tokens = usage_data.get("completion_tokens", 0)
+                except Exception:
+                    pass
+                continue
             yield chunk
 
     except Exception as e:
         success = False
         error_message = str(e)
-        yield f"data: {{'error': {{'message': '{str(e)}', 'type': 'server_error'}}}}\n\n"
+        yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'server_error'}})}\n\n"
 
     finally:
         # Record usage

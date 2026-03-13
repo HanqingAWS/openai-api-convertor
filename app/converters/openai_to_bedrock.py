@@ -1,11 +1,19 @@
 """Convert OpenAI API format to Bedrock Converse API format."""
 import base64
+import json as json_module
 import re
 from typing import Any, Dict, List, Optional
 import httpx
 
 from app.core.config import settings
 from app.schemas.openai import ChatCompletionRequest, Message, Tool
+
+# Reasoning effort to thinking budget_tokens mapping
+REASONING_EFFORT_MAP = {
+    "low": 1024,
+    "medium": 10000,
+    "high": 32000,
+}
 
 
 class OpenAIToBedrockConverter:
@@ -26,8 +34,14 @@ class OpenAIToBedrockConverter:
             "inferenceConfig": self._build_inference_config(request),
         }
 
-        # Extract system message
+        # Extract system message and inject response_format instructions
         system_content = self._extract_system(request.messages)
+        if request.response_format:
+            format_instruction = self._build_response_format_instruction(request.response_format)
+            if format_instruction:
+                if system_content is None:
+                    system_content = []
+                system_content.append({"text": format_instruction})
         if system_content:
             bedrock_request["system"] = system_content
 
@@ -35,11 +49,21 @@ class OpenAIToBedrockConverter:
         if request.tools and settings.enable_tool_use:
             bedrock_request["toolConfig"] = self._convert_tools(request.tools, request.tool_choice)
 
-        # Extended thinking
+        # Extended thinking: explicit thinking takes precedence over reasoning_effort
+        thinking_config = None
         if request.thinking and settings.enable_extended_thinking:
+            thinking_config = request.thinking
+        elif request.reasoning_effort and settings.enable_extended_thinking:
+            budget = REASONING_EFFORT_MAP.get(request.reasoning_effort, 10000)
+            thinking_config = {"type": "enabled", "budget_tokens": budget}
+
+        if thinking_config:
             additional = bedrock_request.get("additionalModelRequestFields", {})
-            additional["thinking"] = request.thinking
+            additional["thinking"] = thinking_config
             bedrock_request["additionalModelRequestFields"] = additional
+            # Extended thinking requires temperature=1 and no top_p
+            bedrock_request["inferenceConfig"].pop("topP", None)
+            bedrock_request["inferenceConfig"]["temperature"] = 1.0
 
         return bedrock_request
 
@@ -228,6 +252,30 @@ class OpenAIToBedrockConverter:
                 tool_config["toolChoice"] = {"tool": {"name": tool_choice["function"]["name"]}}
 
         return tool_config
+
+    def _build_response_format_instruction(self, response_format) -> Optional[str]:
+        """Build system prompt instruction for response_format."""
+        if response_format.type == "text":
+            return None
+        elif response_format.type == "json_object":
+            return (
+                "\n\nIMPORTANT: You must respond with valid JSON only. "
+                "Do not include any text outside the JSON object. "
+                "Do not wrap the response in markdown code blocks."
+            )
+        elif response_format.type == "json_schema" and response_format.json_schema:
+            schema = response_format.json_schema
+            schema_dict = schema.schema_ or {}
+            schema_json = json_module.dumps(schema_dict, indent=2)
+            return (
+                f"\n\nIMPORTANT: You must respond with valid JSON that strictly conforms to the following JSON schema.\n"
+                f"Schema name: {schema.name}\n"
+                f"Schema:\n```json\n{schema_json}\n```\n"
+                f"Do not include any text outside the JSON object. "
+                f"Do not wrap the response in markdown code blocks. "
+                f"Output only the JSON object."
+            )
+        return None
 
     def _parse_json_safe(self, s: str) -> Dict[str, Any]:
         """Safely parse JSON string."""
