@@ -64,6 +64,11 @@ class OpenAIToBedrockConverter:
             # Extended thinking requires temperature=1 and no top_p
             bedrock_request["inferenceConfig"].pop("topP", None)
             bedrock_request["inferenceConfig"]["temperature"] = 1.0
+            # max_tokens must be > budget_tokens
+            budget = thinking_config.get("budget_tokens", 0)
+            current_max = bedrock_request["inferenceConfig"].get("maxTokens", 4096)
+            if current_max <= budget:
+                bedrock_request["inferenceConfig"]["maxTokens"] = budget + 4096
 
         return bedrock_request
 
