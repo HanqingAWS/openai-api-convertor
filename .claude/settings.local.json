@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "*",
+      "Bash",
+      "Edit",
+      "Write",
+      "Bash(*)",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "Task",
+      "mcp__websearch__web_search"
+    ],
+    "defaultMode": "dontAsk"
+  }
+}

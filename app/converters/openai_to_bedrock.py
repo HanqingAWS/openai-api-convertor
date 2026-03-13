@@ -259,21 +259,24 @@ class OpenAIToBedrockConverter:
             return None
         elif response_format.type == "json_object":
             return (
-                "\n\nIMPORTANT: You must respond with valid JSON only. "
-                "Do not include any text outside the JSON object. "
-                "Do not wrap the response in markdown code blocks."
+                "\n\n[RESPONSE FORMAT REQUIREMENT] "
+                "Your entire response must be a single valid JSON object. "
+                "Do NOT include ```json or ``` markers. "
+                "Do NOT include any explanatory text before or after the JSON. "
+                "Start your response with { and end with }."
             )
         elif response_format.type == "json_schema" and response_format.json_schema:
             schema = response_format.json_schema
             schema_dict = schema.schema_ or {}
             schema_json = json_module.dumps(schema_dict, indent=2)
             return (
-                f"\n\nIMPORTANT: You must respond with valid JSON that strictly conforms to the following JSON schema.\n"
+                f"\n\n[RESPONSE FORMAT REQUIREMENT] "
+                f"Your entire response must be a single valid JSON object that strictly conforms to this schema:\n"
                 f"Schema name: {schema.name}\n"
-                f"Schema:\n```json\n{schema_json}\n```\n"
-                f"Do not include any text outside the JSON object. "
-                f"Do not wrap the response in markdown code blocks. "
-                f"Output only the JSON object."
+                f"{schema_json}\n"
+                f"Do NOT include ```json or ``` markers. "
+                f"Do NOT include any explanatory text before or after the JSON. "
+                f"Start your response with {{ and end with }}."
             )
         return None
 
