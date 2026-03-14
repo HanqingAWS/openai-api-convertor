@@ -50,7 +50,7 @@ export const environments: { [key: string]: EnvironmentConfigWithoutPlatform } =
     region: process.env.AWS_REGION || 'us-west-2',
     environmentName: 'dev',
 
-    vpcCidr: '10.0.0.0/16',
+    vpcCidr: '10.10.0.0/16',
     maxAzs: 2,
 
     ecsDesiredCount: 1,
@@ -87,7 +87,7 @@ export const environments: { [key: string]: EnvironmentConfigWithoutPlatform } =
     region: process.env.AWS_REGION || 'us-west-2',
     environmentName: 'prod',
 
-    vpcCidr: '10.1.0.0/16',
+    vpcCidr: '10.11.0.0/16',
     maxAzs: 3,
 
     ecsDesiredCount: 2,

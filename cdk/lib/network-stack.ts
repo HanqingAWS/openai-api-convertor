@@ -22,7 +22,7 @@ export class NetworkStack extends cdk.Stack {
       vpcName: `openai-proxy-${config.environmentName}-vpc`,
       ipAddresses: ec2.IpAddresses.cidr(config.vpcCidr),
       maxAzs: config.maxAzs,
-      natGateways: config.environmentName === 'prod' ? config.maxAzs : 1,
+      natGateways: 1,
       subnetConfiguration: [
         {
           name: 'Public',
