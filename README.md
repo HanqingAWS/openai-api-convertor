@@ -29,11 +29,131 @@ OpenAI 兼容的 API 代理，将请求转发到 AWS Bedrock Claude 模型。使
 | claude-haiku-4-5 | global.anthropic.claude-haiku-4-5-20251001-v1:0 |
 | claude-3-5-haiku | us.anthropic.claude-3-5-haiku-20241022-v1:0 |
 
-支持通过 Admin Portal 或 DynamoDB 自定义映射，优先级：DynamoDB 自定义 > 默认配置 > 直接透传。
+### 添加新模型
+
+通过 Admin Portal 添加自定义模型映射：
+
+1. 打开 Admin Portal → **Model Mappings** 页面
+2. 点击 **Add Mapping**
+3. 填写 Anthropic Model ID（OpenAI SDK 使用的名称，如 `claude-sonnet-4-5`）和 Bedrock Model ID（如 `global.anthropic.claude-sonnet-4-5-20250929-v1:0`）
+4. 保存后立即生效，无需重启服务
+5. 如需计费，在 **Model Pricing** 页面配置对应模型的输入/输出/缓存价格
+
+---
+
+## CDK 部署（生产环境）
+
+使用 AWS CDK 部署到 ECS Fargate，包含完整的 VPC、ALB、DynamoDB、ECS 服务。
+
+### 架构
+
+```
+Internet → ALB (80/443)
+              ├── /v1/*          → API Proxy Service (Fargate)
+              ├── /health        → API Proxy Service (Fargate)
+              ├── /admin/*       → Admin Portal Service (Fargate)
+              └── /api/*         → Admin Portal API (Fargate)
+
+DynamoDB Tables:
+  ├── openai-proxy-api-keys-{env}       # API Key 管理
+  ├── openai-proxy-usage-{env}          # 请求级用量记录
+  ├── openai-proxy-model-mapping-{env}  # 自定义模型映射
+  ├── openai-proxy-pricing-{env}        # 模型定价配置
+  └── openai-proxy-usage-stats-{env}    # 聚合用量统计
+
+CDK Stacks:
+  ├── OpenAIProxy-Network-{env}     # VPC, Subnets, NAT Gateway, ALB, Security Groups
+  ├── OpenAIProxy-DynamoDB-{env}    # DynamoDB Tables
+  └── OpenAIProxy-ECS-{env}        # ECS Cluster, Fargate Services, Task Definitions
+```
+
+### 前置条件
+
+- AWS CLI 已配置，具有 CloudFormation / ECS / ECR / DynamoDB / Secrets Manager 权限
+- Node.js 18+ 和 npm
+- Docker（用于构建容器镜像）
+- CDK Bootstrap 已在目标 Region 执行
+
+### 部署步骤
+
+```bash
+cd cdk
+npm install
+
+# 设置目标 Region（重要：必须与 Bedrock 可用区域一致）
+export AWS_REGION=ap-northeast-1
+
+# Bootstrap（首次部署需要，每个 Region 只需执行一次）
+CDK_PLATFORM=arm64 npx cdk bootstrap -c environment=prod
+
+# 部署所有 Stacks
+CDK_PLATFORM=arm64 npx cdk deploy --all -c environment=prod --require-approval never
+
+# 仅更新 ECS 服务（代码变更后快速部署）
+CDK_PLATFORM=arm64 npx cdk deploy OpenAIProxy-ECS-prod -c environment=prod --exclusively --require-approval never
+```
+
+`CDK_PLATFORM` 支持 `arm64`（Graviton，推荐，成本更低）和 `amd64`。
+
+环境配置在 `cdk/config/config.ts` 中定义，包含 `dev` 和 `prod` 两套：
+
+| 配置项 | dev | prod |
+|--------|-----|------|
+| ECS Tasks | 1 | 2 |
+| CPU / Memory | 512 / 1024 | 1024 / 2048 |
+| Auto Scaling | 1-2 | 2-10 |
+| NAT Gateway | 1 | 1 |
+| Log Retention | 7 天 | 30 天 |
+
+### 部署后配置
+
+```bash
+# 获取 ALB 地址（从 CDK 输出）
+ALB_DNS=<your-alb-dns-name>
+
+# 获取 Master API Key（存储在 Secrets Manager）
+aws secretsmanager get-secret-value \
+  --secret-id openai-proxy-prod-master-api-key \
+  --query 'SecretString' --output text | jq -r '.password'
+
+# 测试 API
+curl http://$ALB_DNS/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <master-api-key>" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 200
+  }'
+
+# 访问管理后台
+open http://$ALB_DNS/admin/
+```
+
+API 服务启动时会自动初始化模型定价数据，无需手动 seed。
+
+### ECS Task IAM 权限
+
+CDK 自动为 ECS Task Role 授予以下权限：
+
+| 权限 | 用途 |
+|------|------|
+| `bedrock:InvokeModel` / `bedrock:InvokeModelWithResponseStream` | 调用 Bedrock 模型 |
+| `bedrock:Converse` / `bedrock:ConverseStream` | Converse API |
+| DynamoDB CRUD（5 张表） | API Key 验证、用量记录、模型映射、定价查询 |
+| Secrets Manager Read | 读取 Master API Key |
+
+### 销毁
+
+```bash
+CDK_PLATFORM=arm64 npx cdk destroy --all -c environment=prod
+```
 
 ---
 
 ## 快速开始（本地 Docker Compose）
+
+适用于本地开发和测试，使用 DynamoDB Local，无需 AWS 账号。
 
 ### 1. 克隆 & 配置
 
@@ -77,6 +197,8 @@ curl http://localhost:8000/v1/models
 # 打开管理后台
 open http://localhost:8005/admin/
 ```
+
+> **注意**：docker-compose 使用本地 DynamoDB，数据与 ECS 生产环境完全隔离。
 
 ---
 
@@ -221,126 +343,10 @@ response = client.chat.completions.create(
 
 - API Key Cache TTL 设为 **Proxy Default**（空值）时，回退到全局配置
 - 全局开关 `ENABLE_PROMPT_CACHING=false` 将完全禁用缓存，忽略以上所有设置
-- **最小 Token 阈值**：Prompt 内容低于 `PROMPT_CACHE_MIN_TOKENS`（默认 1024）时不会插入缓存点，避免对短 prompt 产生不必要的缓存写入开销。可通过环境变量调整此阈值
+- **最小 Token 阈值**：Prompt 内容低于 `PROMPT_CACHE_MIN_TOKENS`（默认 1024，与 Bedrock 最低要求一致）时不会插入缓存点。缓存点基于累计 token 数（system + tools + messages）判断放置位置
+- 缓存点自动注入位置：system prompt 末尾、tools 定义末尾、对话历史中的 assistant 消息末尾、或累计 token 首次超过阈值的消息末尾
 
 > Note: `claude-3-5-haiku` 不支持 Prompt Caching，对不支持的模型自动跳过缓存。
-
----
-
-## EC2 部署测试
-
-适用于在 EC2 上快速拉取代码测试（Amazon Linux 2023）：
-
-```bash
-# 运行安装脚本
-bash scripts/ec2_setup.sh
-
-# 或手动操作
-sudo yum install -y docker git
-sudo systemctl start docker
-sudo usermod -aG docker $USER
-
-# 安装 Docker Compose
-sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-sudo chmod +x /usr/local/bin/docker-compose
-
-# 克隆代码
-git clone https://github.com/HanqingAWS/openai-api-convertor.git
-cd openai-api-convertor
-
-# 配置（EC2 使用 IAM Role，不需要 AK/SK）
-cp env.example .env
-# 编辑 .env 设置 AWS_REGION
-
-# 启动
-sudo docker-compose up -d --build
-
-# 查看日志
-sudo docker-compose logs -f api
-sudo docker-compose logs -f admin-portal
-```
-
-EC2 IAM Role 需要以下权限：
-- `bedrock:InvokeModel`
-- `bedrock:InvokeModelWithResponseStream`
-- `bedrock:Converse`
-- `bedrock:ConverseStream`
-
-安全组需开放端口：8000（API）、8005（Admin Portal）。
-
----
-
-## CDK 部署（生产环境）
-
-使用 AWS CDK 部署到 ECS Fargate，包含 VPC、ALB、DynamoDB、ECS 服务。
-
-### 架构
-
-```
-ALB (80/443)
-  ├── /v1/*          → API Proxy Service (Fargate)
-  ├── /admin/*       → Admin Portal Service (Fargate)
-  └── /api/*         → Admin Portal Service (Fargate)
-
-DynamoDB Tables:
-  ├── openai-proxy-api-keys-{env}
-  ├── openai-proxy-usage-{env}
-  ├── openai-proxy-model-mapping-{env}
-  ├── openai-proxy-pricing-{env}
-  └── openai-proxy-usage-stats-{env}
-```
-
-### 部署步骤
-
-```bash
-cd cdk
-npm install
-
-# Bootstrap（首次部署需要）
-CDK_PLATFORM=arm64 npx cdk bootstrap -c environment=dev
-
-# 部署开发环境
-CDK_PLATFORM=arm64 npx cdk deploy --all -c environment=dev --require-approval never
-
-# 部署生产环境
-CDK_PLATFORM=arm64 npx cdk deploy --all -c environment=prod
-
-# 查看输出（ALB 地址等）
-CDK_PLATFORM=arm64 npx cdk deploy --all -c environment=dev --outputs-file outputs.json
-```
-
-`CDK_PLATFORM` 支持 `arm64`（Graviton，推荐）和 `amd64`。
-
-### 部署后测试
-
-```bash
-# 从 CDK 输出获取 ALB 地址
-ALB_DNS=<your-alb-dns-name>
-
-# 获取 Master API Key（存储在 Secrets Manager）
-aws secretsmanager get-secret-value \
-  --secret-id openai-proxy-dev-master-api-key \
-  --query 'SecretString' --output text | jq -r '.password'
-
-# 测试 API
-curl http://$ALB_DNS/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <master-api-key>" \
-  -d '{
-    "model": "claude-sonnet-4-5",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "max_tokens": 200
-  }'
-
-# 访问管理后台
-open http://$ALB_DNS/admin/
-```
-
-### 销毁
-
-```bash
-CDK_PLATFORM=arm64 npx cdk destroy --all -c environment=dev
-```
 
 ---
 
@@ -372,13 +378,37 @@ CDK_PLATFORM=arm64 npx cdk destroy --all -c environment=dev
 
 ---
 
+## EC2 部署测试
+
+适用于在 EC2 上快速拉取代码测试（Amazon Linux 2023）：
+
+```bash
+# 运行安装脚本
+bash scripts/ec2_setup.sh
+
+# 配置（EC2 使用 IAM Role，不需要 AK/SK）
+cp env.example .env
+# 编辑 .env 设置 AWS_REGION
+
+# 启动
+sudo docker-compose up -d --build
+```
+
+EC2 IAM Role 需要以下权限：
+- `bedrock:InvokeModel` / `bedrock:InvokeModelWithResponseStream`
+- `bedrock:Converse` / `bedrock:ConverseStream`
+
+安全组需开放端口：8000（API）、8005（Admin Portal）。
+
+---
+
 ## 项目结构
 
 ```
 openai-api-convertor/
 ├── app/                          # API Proxy 主服务
 │   ├── api/                      # API 路由（chat, models, health）
-│   ├── converters/               # OpenAI ↔ Bedrock 格式转换
+│   ├── converters/               # OpenAI <-> Bedrock 格式转换
 │   ├── core/                     # 配置、异常
 │   ├── db/                       # DynamoDB 操作
 │   ├── middleware/                # 认证、限流中间件
@@ -389,7 +419,7 @@ openai-api-convertor/
 │   │   ├── api/                  # API 路由（keys, pricing, dashboard, mapping）
 │   │   ├── middleware/           # Cognito 认证
 │   │   ├── schemas/              # 数据模型
-│   │   └── services/             # 用量聚合服务
+│   │   └── services/             # 用量聚合服务（每 5 分钟聚合一次）
 │   └── frontend/                 # React + TypeScript + Tailwind
 ├── cdk/                          # AWS CDK 基础设施
 │   ├── lib/                      # Stack 定义（Network, DynamoDB, ECS）
@@ -399,6 +429,9 @@ openai-api-convertor/
 │   ├── setup_tables.py           # 创建 DynamoDB 表
 │   ├── seed_pricing.py           # 初始化模型定价
 │   └── ec2_setup.sh              # EC2 环境安装
+├── tests/                        # 集成测试
+│   ├── test_api.sh               # Shell 测试脚本
+│   └── test_runner.py            # Python 测试 + HTML 报告
 ├── Dockerfile                    # API 服务镜像
 ├── docker-compose.yml            # 本地开发编排
 └── pyproject.toml                # Python 依赖
@@ -442,8 +475,6 @@ openai-api-convertor/
 
 ## 集成测试
 
-项目提供两种测试方式：
-
 ### Shell 测试脚本
 
 ```bash
@@ -473,22 +504,7 @@ python3 tests/test_runner.py --category streaming
 python3 tests/test_runner.py --output my_report.html
 ```
 
-测试覆盖 20 个用例：健康检查、模型列表、基础对话、系统消息、多轮对话、流式响应、流式用量、结构化输出（json_object / json_schema）、推理力度（low / high）、扩展思考、工具调用、工具结果回传、Temperature、Stop Sequences、Max Tokens、错误处理。
-
----
-
-## 初始化定价数据
-
-```bash
-# 本地开发（DynamoDB Local）
-python scripts/seed_pricing.py
-
-# 覆盖已有定价
-python scripts/seed_pricing.py --force
-
-# 生产环境
-python scripts/seed_pricing.py --no-endpoint
-```
+测试覆盖 20+ 用例：健康检查、模型列表、基础对话、系统消息、多轮对话、流式响应、流式用量、结构化输出（json_object / json_schema）、推理力度（low / high）、扩展思考、工具调用、工具结果回传、Temperature、Stop Sequences、Max Tokens、错误处理。
 
 ---
 
