@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from app.api import chat, models, health
 from app.core.config import settings
 from app.core.exceptions import OpenAIProxyError
-from app.db.dynamodb import DynamoDBClient
+from app.db.dynamodb import DynamoDBClient, ModelPricingManager
 
 
 @asynccontextmanager
@@ -17,6 +17,9 @@ async def lifespan(app: FastAPI):
     # Startup
     try:
         app.state.dynamodb_client = DynamoDBClient()
+        # Seed default pricing if table is empty
+        pricing_manager = ModelPricingManager(app.state.dynamodb_client)
+        pricing_manager.seed_default_pricing()
     except Exception as e:
         print(f"Warning: Could not initialize DynamoDB client: {e}")
         app.state.dynamodb_client = None

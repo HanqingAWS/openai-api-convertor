@@ -548,6 +548,34 @@ class ModelPricingManager:
             "cache_write_1h_price": float(pricing.get("cache_write_1h_price", 0) or 0),
         }
 
+    def seed_default_pricing(self) -> None:
+        """Seed default model pricing if the table is empty."""
+        try:
+            response = self.table.scan(Limit=1)
+            if response.get("Items"):
+                return
+
+            from scripts.seed_pricing import DEFAULT_PRICING
+            now = int(time.time())
+            for model in DEFAULT_PRICING:
+                item = {
+                    "model_id": model["model_id"],
+                    "provider": model["provider"],
+                    "display_name": model["display_name"],
+                    "input_price": Decimal(str(model["input_price"])),
+                    "output_price": Decimal(str(model["output_price"])),
+                    "status": "active",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                for field in ("cache_read_price", "cache_write_5m_price", "cache_write_1h_price"):
+                    if model.get(field) is not None:
+                        item[field] = Decimal(str(model[field]))
+                self.table.put_item(Item=item)
+            print(f"[ModelPricingManager] Seeded {len(DEFAULT_PRICING)} default pricing entries")
+        except Exception as e:
+            print(f"[ModelPricingManager] Warning: Could not seed default pricing: {e}")
+
     def _serialize_item(self, item: Dict) -> Dict[str, Any]:
         """Convert DynamoDB item to plain dict."""
         result = {}
