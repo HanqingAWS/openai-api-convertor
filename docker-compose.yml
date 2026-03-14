@@ -10,9 +10,14 @@ services:
       - DYNAMODB_API_KEYS_TABLE=openai-proxy-api-keys
       - DYNAMODB_USAGE_TABLE=openai-proxy-usage
       - DYNAMODB_MODEL_MAPPING_TABLE=openai-proxy-model-mapping
+      - DYNAMODB_PRICING_TABLE=openai-proxy-pricing
+      - DYNAMODB_USAGE_STATS_TABLE=openai-proxy-usage-stats
       - REQUIRE_API_KEY=${REQUIRE_API_KEY:-false}
       - MASTER_API_KEY=${MASTER_API_KEY:-test-key}
       - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-false}
+      - ENABLE_PROMPT_CACHING=${ENABLE_PROMPT_CACHING:-true}
+      - PROMPT_CACHE_MIN_TOKENS=${PROMPT_CACHE_MIN_TOKENS:-1024}
+      - DEFAULT_CACHE_TTL=${DEFAULT_CACHE_TTL:-5m}
       - DEBUG=true
     depends_on:
       dynamodb-local:
