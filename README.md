@@ -209,11 +209,20 @@ response = client.chat.completions.create(
 )
 ```
 
-Cache TTL can also be configured per-API-key via Admin Portal (Proxy Default / 5 Minutes / 1 Hour / Disabled).
+#### 缓存 TTL 优先级
 
-Priority: Per-Request > Per-API-Key > Global Config (`DEFAULT_CACHE_TTL`).
+缓存 TTL 按以下优先级从高到低决定，匹配到即停止：
 
-> Note: `claude-3-5-haiku` does not support prompt caching. Caching is silently skipped for unsupported models.
+| 优先级 | 来源 | 设置方式 | 示例 |
+|--------|------|----------|------|
+| 1（最高） | 请求级别 | `extra_body={"cache_ttl": "1h"}` 或 `extra_body={"caching": False}` | 单次请求指定 TTL 或禁用缓存 |
+| 2 | API Key 级别 | Admin Portal → API Keys → Cache TTL 下拉框 | 为特定 Key 设置 `5m` / `1h` / `disabled` |
+| 3（最低） | 全局配置 | 环境变量 `DEFAULT_CACHE_TTL`（默认 `5m`） | 所有未指定的请求使用此值 |
+
+- API Key Cache TTL 设为 **Proxy Default**（空值）时，回退到全局配置
+- 全局开关 `ENABLE_PROMPT_CACHING=false` 将完全禁用缓存，忽略以上所有设置
+
+> Note: `claude-3-5-haiku` 不支持 Prompt Caching，对不支持的模型自动跳过缓存。
 
 ---
 
