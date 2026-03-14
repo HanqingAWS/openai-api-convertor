@@ -81,7 +81,7 @@ cd cdk
 npm install
 
 # 设置目标 Region（重要：必须与 Bedrock 可用区域一致）
-export AWS_REGION=ap-northeast-1
+export AWS_REGION=us-west-2
 
 # Bootstrap（首次部署需要，每个 Region 只需执行一次）
 CDK_PLATFORM=arm64 npx cdk bootstrap -c environment=prod
