@@ -221,6 +221,7 @@ response = client.chat.completions.create(
 
 - API Key Cache TTL 设为 **Proxy Default**（空值）时，回退到全局配置
 - 全局开关 `ENABLE_PROMPT_CACHING=false` 将完全禁用缓存，忽略以上所有设置
+- **最小 Token 阈值**：Prompt 内容低于 `PROMPT_CACHE_MIN_TOKENS`（默认 1024）时不会插入缓存点，避免对短 prompt 产生不必要的缓存写入开销。可通过环境变量调整此阈值
 
 > Note: `claude-3-5-haiku` 不支持 Prompt Caching，对不支持的模型自动跳过缓存。
 
