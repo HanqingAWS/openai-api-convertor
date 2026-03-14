@@ -652,6 +652,22 @@ def test_tool_result() -> TestResult:
                 "content": '{"temperature": 22, "condition": "sunny"}',
             },
         ],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get current weather for a location",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "location": {"type": "string", "description": "City name"}
+                        },
+                        "required": ["location"],
+                    },
+                },
+            }
+        ],
         "max_tokens": 200,
     }
     r = curl_request(f"{API_BASE_URL}/v1/chat/completions", method="POST", data=payload)
