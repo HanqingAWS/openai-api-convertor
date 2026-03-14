@@ -71,6 +71,7 @@ class APIKeyManager:
                 "rate_limit": int(item.get("rate_limit", {}).get("N", "100")),
                 "created_at": item.get("created_at", {}).get("S"),
                 "service_tier": item.get("service_tier", {}).get("S", "default"),
+                "cache_ttl": item.get("cache_ttl", {}).get("S", ""),
             }
         except Exception:
             return None
@@ -84,6 +85,7 @@ class APIKeyManager:
         monthly_budget: Optional[float] = 0,
         rate_limit: Optional[int] = 100,
         service_tier: Optional[str] = "default",
+        cache_ttl: Optional[str] = "",
     ) -> str:
         """Create a new API key. Returns the api_key string."""
         api_key = f"sk-{uuid4().hex}"
@@ -101,6 +103,7 @@ class APIKeyManager:
             "budget_mtd_month": datetime.now(timezone.utc).strftime("%Y-%m"),
             "rate_limit": rate_limit or 100,
             "service_tier": service_tier or "default",
+            "cache_ttl": cache_ttl or "",
             "is_active": True,
             "created_at": now,
             "updated_at": now,
@@ -257,6 +260,7 @@ class UsageTracker:
         latency_ms: Optional[int] = None,
         cached_tokens: int = 0,
         cache_write_tokens: int = 0,
+        cache_write_ttl: Optional[str] = None,
     ):
         """Record API usage."""
         try:
@@ -274,6 +278,8 @@ class UsageTracker:
                 "success": success,
             }
 
+            if cache_write_ttl:
+                item["cache_write_ttl"] = cache_write_ttl
             if error_message:
                 item["error_message"] = error_message
             if latency_ms:
@@ -432,7 +438,8 @@ class ModelPricingManager:
         input_price: float = 0,
         output_price: float = 0,
         cache_read_price: Optional[float] = None,
-        cache_write_price: Optional[float] = None,
+        cache_write_5m_price: Optional[float] = None,
+        cache_write_1h_price: Optional[float] = None,
         status: str = "active",
     ) -> Dict[str, Any]:
         """Create a new model pricing entry."""
@@ -450,8 +457,10 @@ class ModelPricingManager:
             item["display_name"] = display_name
         if cache_read_price is not None:
             item["cache_read_price"] = Decimal(str(cache_read_price))
-        if cache_write_price is not None:
-            item["cache_write_price"] = Decimal(str(cache_write_price))
+        if cache_write_5m_price is not None:
+            item["cache_write_5m_price"] = Decimal(str(cache_write_5m_price))
+        if cache_write_1h_price is not None:
+            item["cache_write_1h_price"] = Decimal(str(cache_write_1h_price))
 
         self.table.put_item(Item=item)
         return self._serialize_item(item)
@@ -535,7 +544,8 @@ class ModelPricingManager:
             "input_price": float(pricing.get("input_price", 0)),
             "output_price": float(pricing.get("output_price", 0)),
             "cache_read_price": float(pricing.get("cache_read_price", 0) or 0),
-            "cache_write_price": float(pricing.get("cache_write_price", 0) or 0),
+            "cache_write_5m_price": float(pricing.get("cache_write_5m_price", 0) or 0),
+            "cache_write_1h_price": float(pricing.get("cache_write_1h_price", 0) or 0),
         }
 
     def _serialize_item(self, item: Dict) -> Dict[str, Any]:
@@ -677,7 +687,13 @@ class UsageStatsManager:
                             input_cost = Decimal(str(int(item.get("prompt_tokens", 0)))) * Decimal(str(prices["input_price"])) / Decimal("1000000")
                             output_cost = Decimal(str(int(item.get("completion_tokens", 0)))) * Decimal(str(prices["output_price"])) / Decimal("1000000")
                             cache_read_cost = Decimal(str(int(item.get("cached_tokens", 0)))) * Decimal(str(prices["cache_read_price"])) / Decimal("1000000")
-                            cache_write_cost = Decimal(str(int(item.get("cache_write_tokens", 0)))) * Decimal(str(prices["cache_write_price"])) / Decimal("1000000")
+                            # Use TTL-specific write price from cacheDetails
+                            write_ttl = item.get("cache_write_ttl", "5m") or "5m"
+                            if write_ttl == "1h":
+                                write_price = prices.get("cache_write_1h_price", 0)
+                            else:
+                                write_price = prices.get("cache_write_5m_price", 0)
+                            cache_write_cost = Decimal(str(int(item.get("cache_write_tokens", 0)))) * Decimal(str(write_price)) / Decimal("1000000")
                             total_cost += input_cost + output_cost + cache_read_cost + cache_write_cost
 
                 # Find max timestamp for last_aggregated_timestamp

@@ -50,7 +50,7 @@ async def get_api_key_info(
 
     # Check master key
     if settings.master_api_key and api_key == settings.master_api_key:
-        return {"api_key": api_key, "user_id": "master", "rate_limit": 10000}
+        return {"api_key": api_key, "user_id": "master", "rate_limit": 10000, "cache_ttl": ""}
 
     # Validate against DynamoDB
     dynamodb_client = getattr(request.app.state, "dynamodb_client", None)

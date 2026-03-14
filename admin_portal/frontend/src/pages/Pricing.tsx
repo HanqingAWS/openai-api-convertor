@@ -61,7 +61,8 @@ function PricingForm({
     input_price: initialData?.input_price || 0,
     output_price: initialData?.output_price || 0,
     cache_read_price: initialData?.cache_read_price || 0,
-    cache_write_price: initialData?.cache_write_price || 0,
+    cache_write_5m_price: initialData?.cache_write_5m_price || 0,
+    cache_write_1h_price: initialData?.cache_write_1h_price || 0,
     status: initialData?.status || 'active',
   });
 
@@ -190,7 +191,7 @@ function PricingForm({
         <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
           <span className="material-symbols-outlined text-sm">cached</span> Cache Pricing
         </h3>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-4">
           <div className="space-y-2">
             <label className="block text-sm font-medium text-slate-300">
               {t('pricing.form.cacheReadPrice')}
@@ -210,26 +211,52 @@ function PricingForm({
                 placeholder="0.00"
               />
             </div>
+            <p className="text-xs text-slate-500">{t('pricing.form.perMillionTokens')}</p>
           </div>
 
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-300">
-              {t('pricing.form.cacheWritePrice')}
-            </label>
-            <div className="relative rounded-lg shadow-sm">
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                <span className="text-slate-500 sm:text-sm">$</span>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-300">
+                Cache Write 5m
+              </label>
+              <div className="relative rounded-lg shadow-sm">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                  <span className="text-slate-500 sm:text-sm">$</span>
+                </div>
+                <input
+                  type="number"
+                  step="0.0001"
+                  value={formData.cache_write_5m_price}
+                  onChange={(e) =>
+                    setFormData({ ...formData, cache_write_5m_price: parseFloat(e.target.value) || 0 })
+                  }
+                  className="block w-full rounded-lg border border-border-dark bg-input-bg text-white pl-7 pr-3 focus:border-primary focus:ring-primary sm:text-sm h-10"
+                  placeholder="0.00"
+                />
               </div>
-              <input
-                type="number"
-                step="0.0001"
-                value={formData.cache_write_price}
-                onChange={(e) =>
-                  setFormData({ ...formData, cache_write_price: parseFloat(e.target.value) || 0 })
-                }
-                className="block w-full rounded-lg border border-border-dark bg-input-bg text-white pl-7 pr-3 focus:border-primary focus:ring-primary sm:text-sm h-10"
-                placeholder="0.00"
-              />
+              <p className="text-xs text-slate-500">{t('pricing.form.perMillionTokens')}</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-300">
+                Cache Write 1h
+              </label>
+              <div className="relative rounded-lg shadow-sm">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                  <span className="text-slate-500 sm:text-sm">$</span>
+                </div>
+                <input
+                  type="number"
+                  step="0.0001"
+                  value={formData.cache_write_1h_price}
+                  onChange={(e) =>
+                    setFormData({ ...formData, cache_write_1h_price: parseFloat(e.target.value) || 0 })
+                  }
+                  className="block w-full rounded-lg border border-border-dark bg-input-bg text-white pl-7 pr-3 focus:border-primary focus:ring-primary sm:text-sm h-10"
+                  placeholder="0.00"
+                />
+              </div>
+              <p className="text-xs text-slate-500">{t('pricing.form.perMillionTokens')}</p>
             </div>
           </div>
         </div>
@@ -428,7 +455,13 @@ export default function Pricing() {
                   </span>
                 </th>
                 <th className="px-6 py-4 text-right text-xs font-bold text-slate-400 uppercase tracking-wider hidden xl:table-cell">
-                  {t('pricing.cacheWrite')}
+                  CACHE WRITE 5M
+                  <span className="normal-case font-normal text-slate-500 text-[10px] block">
+                    ({t('pricing.perMillionTokens')})
+                  </span>
+                </th>
+                <th className="px-6 py-4 text-right text-xs font-bold text-slate-400 uppercase tracking-wider hidden xl:table-cell">
+                  CACHE WRITE 1H
                   <span className="normal-case font-normal text-slate-500 text-[10px] block">
                     ({t('pricing.perMillionTokens')})
                   </span>
@@ -441,7 +474,7 @@ export default function Pricing() {
             <tbody className="bg-surface-dark divide-y divide-border-dark">
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center">
+                  <td colSpan={8} className="px-6 py-12 text-center">
                     <span className="material-symbols-outlined animate-spin text-4xl text-primary">
                       progress_activity
                     </span>
@@ -449,7 +482,7 @@ export default function Pricing() {
                 </tr>
               ) : data?.items.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={8} className="px-6 py-12 text-center text-slate-400">
                     No pricing data found
                   </td>
                 </tr>
@@ -510,8 +543,13 @@ export default function Pricing() {
                         {pricing.cache_read_price ? `$${pricing.cache_read_price.toFixed(2)}` : '—'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-400 hidden xl:table-cell">
-                        {pricing.cache_write_price
-                          ? `$${pricing.cache_write_price.toFixed(2)}`
+                        {pricing.cache_write_5m_price
+                          ? `$${pricing.cache_write_5m_price.toFixed(2)}`
+                          : '—'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-400 hidden xl:table-cell">
+                        {pricing.cache_write_1h_price
+                          ? `$${pricing.cache_write_1h_price.toFixed(2)}`
                           : '—'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">

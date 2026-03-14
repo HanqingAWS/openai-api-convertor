@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     enable_tool_use: bool = Field(default=True, alias="ENABLE_TOOL_USE")
     enable_extended_thinking: bool = Field(default=True, alias="ENABLE_EXTENDED_THINKING")
 
+    # Prompt Caching
+    enable_prompt_caching: bool = Field(default=True, alias="ENABLE_PROMPT_CACHING")
+    prompt_cache_min_tokens: int = Field(default=1024, alias="PROMPT_CACHE_MIN_TOKENS")
+    default_cache_ttl: str = Field(default="5m", alias="DEFAULT_CACHE_TTL")
+
     # Timeouts
     bedrock_timeout: int = Field(default=300, alias="BEDROCK_TIMEOUT")
     streaming_timeout: int = Field(default=600, alias="STREAMING_TIMEOUT")

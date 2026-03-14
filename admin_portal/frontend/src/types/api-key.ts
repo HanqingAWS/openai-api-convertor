@@ -12,6 +12,7 @@ export interface ApiKey {
   tpm_limit?: number;
   rate_limit?: number;
   service_tier?: string;
+  cache_ttl?: string;  // '', '5m', '1h', 'disabled'
   is_active: boolean;
   deactivated_reason?: string;  // Reason for deactivation (e.g., "budget_exceeded")
   created_at: number;
@@ -32,6 +33,7 @@ export interface ApiKeyCreate {
   monthly_budget?: number;
   rate_limit?: number;
   service_tier?: string;
+  cache_ttl?: string;
 }
 
 export interface ApiKeyUpdate {
@@ -42,6 +44,7 @@ export interface ApiKeyUpdate {
   rate_limit?: number;
   service_tier?: string;
   is_active?: boolean;
+  cache_ttl?: string;
 }
 
 export interface ApiKeyListResponse {

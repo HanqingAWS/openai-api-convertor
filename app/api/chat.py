@@ -29,6 +29,30 @@ def get_usage_tracker(request: Request) -> Optional[UsageTracker]:
     return None
 
 
+def resolve_cache_ttl(request_data: ChatCompletionRequest, api_key_info: dict) -> Optional[str]:
+    """Resolve cache TTL based on priority: Per-Request > Per-API-Key > Global."""
+    if not settings.enable_prompt_caching:
+        return None
+
+    # Per-Request: explicit disable
+    if request_data.caching is False:
+        return None
+
+    # Per-Request: explicit cache_ttl
+    if request_data.cache_ttl:
+        return request_data.cache_ttl
+
+    # Per-API-Key
+    key_ttl = api_key_info.get("cache_ttl", "")
+    if key_ttl == "disabled":
+        return None
+    if key_ttl in ("5m", "1h"):
+        return key_ttl
+
+    # Global default
+    return settings.default_cache_ttl
+
+
 @router.post("/v1/chat/completions")
 async def create_chat_completion(
     request_data: ChatCompletionRequest,
@@ -45,6 +69,9 @@ async def create_chat_completion(
     # Store api_key_info in request state for rate limiting
     request.state.api_key_info = api_key_info
 
+    # Resolve cache TTL
+    cache_ttl = resolve_cache_ttl(request_data, api_key_info)
+
     try:
         if request_data.stream:
             # Streaming response
@@ -56,6 +83,7 @@ async def create_chat_completion(
                     bedrock_service,
                     usage_tracker,
                     start_time,
+                    cache_ttl,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -66,7 +94,9 @@ async def create_chat_completion(
             )
         else:
             # Non-streaming response
-            response = await bedrock_service.chat_completion(request_data, request_id)
+            response, cache_usage = await bedrock_service.chat_completion(
+                request_data, request_id, cache_ttl=cache_ttl
+            )
 
             # Record usage
             if usage_tracker:
@@ -79,6 +109,9 @@ async def create_chat_completion(
                     completion_tokens=response.usage.completion_tokens,
                     success=True,
                     latency_ms=latency_ms,
+                    cached_tokens=cache_usage.get("cached_tokens", 0),
+                    cache_write_tokens=cache_usage.get("cache_write_tokens", 0),
+                    cache_write_ttl=cache_usage.get("cache_write_ttl"),
                 )
 
             return response
@@ -117,21 +150,30 @@ async def _stream_response(
     bedrock_service: BedrockService,
     usage_tracker: Optional[UsageTracker],
     start_time: float,
+    cache_ttl: Optional[str],
 ):
     """Stream chat completion response."""
     prompt_tokens = 0
     completion_tokens = 0
+    cached_tokens = 0
+    cache_write_tokens = 0
+    cache_write_ttl = None
     success = True
     error_message = None
 
     try:
-        async for chunk in bedrock_service.chat_completion_stream(request_data, request_id):
+        async for chunk in bedrock_service.chat_completion_stream(
+            request_data, request_id, cache_ttl=cache_ttl
+        ):
             # Internal usage marker — extract but don't send to client
             if chunk.startswith("__usage__:"):
                 try:
                     usage_data = json.loads(chunk[len("__usage__:"):])
                     prompt_tokens = usage_data.get("prompt_tokens", 0)
                     completion_tokens = usage_data.get("completion_tokens", 0)
+                    cached_tokens = usage_data.get("cached_tokens", 0)
+                    cache_write_tokens = usage_data.get("cache_write_tokens", 0)
+                    cache_write_ttl = usage_data.get("cache_write_ttl")
                 except Exception:
                     pass
                 continue
@@ -155,4 +197,7 @@ async def _stream_response(
                 success=success,
                 error_message=error_message,
                 latency_ms=latency_ms,
+                cached_tokens=cached_tokens,
+                cache_write_tokens=cache_write_tokens,
+                cache_write_ttl=cache_write_ttl,
             )

@@ -14,6 +14,7 @@ from app.schemas.openai import (
     ToolCall,
     FunctionCall,
     Usage,
+    PromptTokensDetails,
 )
 
 
@@ -78,12 +79,22 @@ class BedrockToOpenAIConverter:
         if tool_calls:
             finish_reason = "tool_calls"
 
-        # Usage
+        # Usage - prompt_tokens includes cached tokens (OpenAI convention)
         usage_data = bedrock_response.get("usage", {})
+        input_tokens = usage_data.get("inputTokens", 0)
+        cache_read = usage_data.get("cacheReadInputTokens", 0)
+        output_tokens = usage_data.get("outputTokens", 0)
+        prompt_tokens = input_tokens + cache_read
+
+        prompt_details = None
+        if cache_read > 0:
+            prompt_details = PromptTokensDetails(cached_tokens=cache_read)
+
         usage = Usage(
-            prompt_tokens=usage_data.get("inputTokens", 0),
-            completion_tokens=usage_data.get("outputTokens", 0),
-            total_tokens=usage_data.get("inputTokens", 0) + usage_data.get("outputTokens", 0),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=output_tokens,
+            total_tokens=prompt_tokens + output_tokens,
+            prompt_tokens_details=prompt_details,
         )
 
         return ChatCompletionResponse(
@@ -223,7 +234,7 @@ class BedrockToOpenAIConverter:
 
         return events
 
-    def extract_stream_usage(self, event: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    def extract_stream_usage(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Extract usage data from a metadata stream event."""
         if "metadata" not in event:
             return None
@@ -231,20 +242,66 @@ class BedrockToOpenAIConverter:
         usage = metadata.get("usage", {})
         if not usage:
             return None
+
+        input_tokens = usage.get("inputTokens", 0)
+        cache_read = usage.get("cacheReadInputTokens", 0)
+        cache_write = usage.get("cacheWriteInputTokens", 0)
+        output_tokens = usage.get("outputTokens", 0)
+        prompt_tokens = input_tokens + cache_read
+
+        # Parse cacheDetails for write TTL
+        cache_write_ttl = None
+        for detail in usage.get("cacheDetails", []):
+            if detail.get("inputTokens", 0) > 0:
+                cache_write_ttl = detail.get("ttl")
+                break
+
         return {
-            "prompt_tokens": usage.get("inputTokens", 0),
-            "completion_tokens": usage.get("outputTokens", 0),
-            "total_tokens": usage.get("totalTokens", 0),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": prompt_tokens + output_tokens,
+            "cached_tokens": cache_read,
+            "cache_write_tokens": cache_write,
+            "cache_write_ttl": cache_write_ttl,
+        }
+
+    def extract_cache_usage(self, bedrock_response: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract cache usage from a non-streaming Bedrock response."""
+        usage_data = bedrock_response.get("usage", {})
+        cache_read = usage_data.get("cacheReadInputTokens", 0)
+        cache_write = usage_data.get("cacheWriteInputTokens", 0)
+
+        cache_write_ttl = None
+        for detail in usage_data.get("cacheDetails", []):
+            if detail.get("inputTokens", 0) > 0:
+                cache_write_ttl = detail.get("ttl")
+                break
+
+        return {
+            "cached_tokens": cache_read,
+            "cache_write_tokens": cache_write,
+            "cache_write_ttl": cache_write_ttl,
         }
 
     def build_usage_chunk(
-        self, request_id: str, model: str, usage_data: Dict[str, int]
+        self, request_id: str, model: str, usage_data: Dict[str, Any]
     ) -> str:
         """Build a final SSE chunk containing usage statistics."""
+        prompt_details = None
+        cached = usage_data.get("cached_tokens", 0)
+        if cached > 0:
+            prompt_details = PromptTokensDetails(cached_tokens=cached)
+
+        usage = Usage(
+            prompt_tokens=usage_data.get("prompt_tokens", 0),
+            completion_tokens=usage_data.get("completion_tokens", 0),
+            total_tokens=usage_data.get("total_tokens", 0),
+            prompt_tokens_details=prompt_details,
+        )
         chunk = ChatCompletionChunk(
             id=request_id,
             model=model,
             choices=[],
-            usage=Usage(**usage_data),
+            usage=usage,
         )
         return f"data: {chunk.model_dump_json()}\n\n"

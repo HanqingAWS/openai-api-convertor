@@ -127,7 +127,8 @@ async def create_pricing(request: PricingCreate):
         input_price=request.input_price,
         output_price=request.output_price,
         cache_read_price=request.cache_read_price,
-        cache_write_price=request.cache_write_price,
+        cache_write_5m_price=request.cache_write_5m_price,
+        cache_write_1h_price=request.cache_write_1h_price,
         status=request.status,
     )
 

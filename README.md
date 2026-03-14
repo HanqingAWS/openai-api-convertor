@@ -5,11 +5,15 @@ OpenAI 兼容的 API 代理，将请求转发到 AWS Bedrock Claude 模型。使
 ## 功能特性
 
 - OpenAI v1 兼容 API（`/v1/chat/completions`、`/v1/models`）
-- 支持 Claude 模型：Opus 4.5/4.6、Sonnet 4.5、Haiku 4.5、Claude 3.5 Haiku
+- 支持 Claude 模型：Opus 4.5/4.6、Sonnet 4.5/4.6、Haiku 4.5、Claude 3.5 Haiku
 - 流式响应（Streaming SSE）
 - 图片输入（Vision）
 - 工具调用（Function Calling）
 - 扩展思考（Extended Thinking）
+- Prompt Caching（自动缓存 system prompt / 历史对话 / tools，支持 5m / 1h TTL）
+- 结构化输出（Structured Output：`json_object` / `json_schema`）
+- 流式用量统计（`stream_options.include_usage`）
+- 推理力度控制（`reasoning_effort`：low / medium / high）
 - API Key 认证 & 速率限制
 - DynamoDB 使用量追踪 & 成本计算
 - Admin Portal 管理后台（API Key 管理、模型定价、用量统计）
@@ -21,6 +25,7 @@ OpenAI 兼容的 API 代理，将请求转发到 AWS Bedrock Claude 模型。使
 | claude-opus-4-5 | global.anthropic.claude-opus-4-5-20251101-v1:0 |
 | claude-opus-4-6 | global.anthropic.claude-opus-4-6-v1 |
 | claude-sonnet-4-5 | global.anthropic.claude-sonnet-4-5-20250929-v1:0 |
+| claude-sonnet-4-6 | global.anthropic.claude-sonnet-4-6 |
 | claude-haiku-4-5 | global.anthropic.claude-haiku-4-5-20251001-v1:0 |
 | claude-3-5-haiku | us.anthropic.claude-3-5-haiku-20241022-v1:0 |
 
@@ -174,6 +179,42 @@ response = client.chat.completions.create(
 )
 ```
 
+### Prompt Caching
+
+Prompt caching is **enabled by default**. The proxy automatically inserts cache points for system prompts, conversation history, and tool definitions. No client-side changes needed.
+
+```python
+# Automatic caching (default) - no extra config needed
+response = client.chat.completions.create(
+    model="claude-sonnet-4-5",
+    messages=[
+        {"role": "system", "content": "Very long system prompt..."},
+        {"role": "user", "content": "Hello!"},
+    ],
+)
+# response.usage.prompt_tokens_details.cached_tokens shows cache hit tokens
+
+# Specify 1 hour TTL for long-running agent tasks
+response = client.chat.completions.create(
+    model="claude-sonnet-4-5",
+    messages=[...],
+    extra_body={"cache_ttl": "1h"}
+)
+
+# Disable caching for a single request
+response = client.chat.completions.create(
+    model="claude-sonnet-4-5",
+    messages=[...],
+    extra_body={"caching": False}
+)
+```
+
+Cache TTL can also be configured per-API-key via Admin Portal (Proxy Default / 5 Minutes / 1 Hour / Disabled).
+
+Priority: Per-Request > Per-API-Key > Global Config (`DEFAULT_CACHE_TTL`).
+
+> Note: `claude-3-5-haiku` does not support prompt caching. Caching is silently skipped for unsupported models.
+
 ---
 
 ## EC2 部署测试
@@ -312,6 +353,9 @@ CDK_PLATFORM=arm64 npx cdk destroy --all -c environment=dev
 | `ENABLE_VISION` | 启用图片输入 | true |
 | `ENABLE_TOOL_USE` | 启用工具调用 | true |
 | `ENABLE_EXTENDED_THINKING` | 启用扩展思考 | true |
+| `ENABLE_PROMPT_CACHING` | 启用 Prompt Caching | true |
+| `PROMPT_CACHE_MIN_TOKENS` | 最小缓存 token 数（低于此值不缓存） | 1024 |
+| `DEFAULT_CACHE_TTL` | 默认缓存 TTL（`5m` 或 `1h`） | 5m |
 | `SKIP_AUTH` | Admin Portal 跳过认证 | true |
 | `COGNITO_USER_POOL_ID` | Cognito User Pool ID | - |
 | `COGNITO_CLIENT_ID` | Cognito Client ID | - |
@@ -343,11 +387,100 @@ openai-api-convertor/
 ├── scripts/                      # 工具脚本
 │   ├── create_api_key.py         # 创建 API Key
 │   ├── setup_tables.py           # 创建 DynamoDB 表
+│   ├── seed_pricing.py           # 初始化模型定价
 │   └── ec2_setup.sh              # EC2 环境安装
 ├── Dockerfile                    # API 服务镜像
 ├── docker-compose.yml            # 本地开发编排
 └── pyproject.toml                # Python 依赖
 ```
+
+## OpenAI 兼容功能对比
+
+| 功能 | OpenAI API | LiteLLM | 本项目 |
+|------|:---:|:---:|:---:|
+| `/v1/chat/completions` | ✅ | ✅ | ✅ |
+| `/v1/models` | ✅ | ✅ | ✅ |
+| `/v1/embeddings` | ✅ | ✅ | ❌ |
+| `/v1/images` | ✅ | ✅ | ❌ |
+| 流式响应 (`stream`) | ✅ | ✅ | ✅ |
+| 流式用量 (`stream_options.include_usage`) | ✅ | ✅ | ✅ |
+| 系统消息 (`system`) | ✅ | ✅ | ✅ |
+| 多轮对话 | ✅ | ✅ | ✅ |
+| 图片输入 (`image_url`) | ✅ | ✅ | ✅ |
+| 工具调用 (`tools` / `tool_choice`) | ✅ | ✅ | ✅ |
+| 工具结果回传 (`tool` role) | ✅ | ✅ | ✅ |
+| 结构化输出 (`response_format: json_object`) | ✅ | ✅ | ✅ |
+| 结构化输出 (`response_format: json_schema`) | ✅ | ✅ | ✅ |
+| Prompt Caching (自动缓存 + TTL 控制) | ❌ | ✅ | ✅ |
+| 扩展思考 (`thinking` via `extra_body`) | ❌* | ✅ | ✅ |
+| 推理力度 (`reasoning_effort`) | ✅ | ✅ | ✅ |
+| Temperature / Top-P | ✅ | ✅ | ✅ |
+| Stop Sequences (`stop`) | ✅ | ✅ | ✅ |
+| Max Tokens (`max_tokens`) | ✅ | ✅ | ✅ |
+| API Key 认证 | ✅ | ✅ | ✅ |
+| 速率限制 | ✅ | ✅ | ✅ |
+| 用量追踪 & 成本计算 | ✅ | ✅ | ✅ |
+| 模型定价管理 | ❌ | ❌ | ✅ |
+| Admin Portal 管理后台 | ❌ | ✅ | ✅ |
+| 多 Provider 支持 | ✅ | ✅ | ❌** |
+
+> \* OpenAI 原生模型不支持 Claude 风格的扩展思考，此处为 Claude-specific 功能。
+>
+> \** 本项目专注于 AWS Bedrock Claude 模型，提供最深度的 Claude 功能集成。
+
+---
+
+## 集成测试
+
+项目提供两种测试方式：
+
+### Shell 测试脚本
+
+```bash
+export API_BASE_URL=http://localhost:8000
+export API_KEY=test-key
+export TEST_MODEL=claude-sonnet-4-5
+
+bash tests/test_api.sh
+
+# 运行单个测试
+bash tests/test_api.sh test_tool_calling
+```
+
+### Python 测试 + HTML 报告
+
+```bash
+export API_BASE_URL=http://localhost:8000
+export API_KEY=test-key
+export TEST_MODEL=claude-sonnet-4-5
+
+python3 tests/test_runner.py
+
+# 指定分类
+python3 tests/test_runner.py --category streaming
+
+# 自定义报告路径
+python3 tests/test_runner.py --output my_report.html
+```
+
+测试覆盖 20 个用例：健康检查、模型列表、基础对话、系统消息、多轮对话、流式响应、流式用量、结构化输出（json_object / json_schema）、推理力度（low / high）、扩展思考、工具调用、工具结果回传、Temperature、Stop Sequences、Max Tokens、错误处理。
+
+---
+
+## 初始化定价数据
+
+```bash
+# 本地开发（DynamoDB Local）
+python scripts/seed_pricing.py
+
+# 覆盖已有定价
+python scripts/seed_pricing.py --force
+
+# 生产环境
+python scripts/seed_pricing.py --no-endpoint
+```
+
+---
 
 ## License
 

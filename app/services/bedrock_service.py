@@ -41,19 +41,30 @@ class BedrockService:
         self.bedrock_to_openai = BedrockToOpenAIConverter()
 
     async def chat_completion(
-        self, request: ChatCompletionRequest, request_id: Optional[str] = None
-    ) -> ChatCompletionResponse:
-        """Handle non-streaming chat completion."""
+        self,
+        request: ChatCompletionRequest,
+        request_id: Optional[str] = None,
+        cache_ttl: Optional[str] = None,
+    ) -> tuple[ChatCompletionResponse, Dict[str, Any]]:
+        """Handle non-streaming chat completion.
+
+        Returns:
+            Tuple of (response, cache_usage) where cache_usage contains
+            cached_tokens, cache_write_tokens, cache_write_ttl.
+        """
         request_id = request_id or f"chatcmpl-{uuid4().hex[:24]}"
 
         try:
-            bedrock_request = self.openai_to_bedrock.convert_request(request)
+            bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
             model_id = bedrock_request.pop("modelId")
 
             response = self.client.converse(modelId=model_id, **bedrock_request)
 
-            return self.bedrock_to_openai.convert_response(
-                response, request.model, request_id
+            cache_usage = self.bedrock_to_openai.extract_cache_usage(response)
+
+            return (
+                self.bedrock_to_openai.convert_response(response, request.model, request_id),
+                cache_usage,
             )
 
         except self.client.exceptions.ValidationException as e:
@@ -66,7 +77,10 @@ class BedrockService:
             raise BedrockAPIError(f"Bedrock error: {str(e)}", http_status=500)
 
     async def chat_completion_stream(
-        self, request: ChatCompletionRequest, request_id: Optional[str] = None
+        self,
+        request: ChatCompletionRequest,
+        request_id: Optional[str] = None,
+        cache_ttl: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Handle streaming chat completion.
 
@@ -81,7 +95,7 @@ class BedrockService:
         )
 
         try:
-            bedrock_request = self.openai_to_bedrock.convert_request(request)
+            bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
             model_id = bedrock_request.pop("modelId")
 
             response = self.client.converse_stream(modelId=model_id, **bedrock_request)

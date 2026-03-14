@@ -70,6 +70,7 @@ function ApiKeyForm({
     monthly_budget: initialData?.monthly_budget || 0,
     rate_limit: initialData?.rate_limit || 1000,
     service_tier: initialData?.service_tier || 'default',
+    cache_ttl: initialData?.cache_ttl || '',
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -169,6 +170,25 @@ function ApiKeyForm({
           {formData.service_tier === 'priority' && t('apiKeys.serviceTiers.priorityDesc')}
           {formData.service_tier === 'default' && t('apiKeys.serviceTiers.defaultDesc')}
           {formData.service_tier === 'reserved' && t('apiKeys.serviceTiers.reservedDesc')}
+        </p>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-slate-300 mb-1">
+          Cache TTL
+        </label>
+        <select
+          value={formData.cache_ttl}
+          onChange={(e) => setFormData({ ...formData, cache_ttl: e.target.value })}
+          className="w-full px-3 py-2 bg-input-bg border border-border-dark rounded-lg text-white focus:border-primary focus:ring-1 focus:ring-primary"
+        >
+          <option value="">Proxy Default</option>
+          <option value="5m">5 Minutes</option>
+          <option value="1h">1 Hour</option>
+          <option value="disabled">Disabled</option>
+        </select>
+        <p className="mt-1 text-xs text-slate-500">
+          Prompt caching TTL for this key. "Proxy Default" uses the global setting.
         </p>
       </div>
 
@@ -488,6 +508,9 @@ export default function ApiKeys() {
                 <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:table-cell">
                   {t('apiKeys.form.serviceTier')}
                 </th>
+                <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:table-cell">
+                  CACHE TTL
+                </th>
                 <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">
                   {t('common.status')}
                 </th>
@@ -499,7 +522,7 @@ export default function ApiKeys() {
             <tbody className="divide-y divide-border-dark">
               {isLoading ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center">
+                  <td colSpan={10} className="px-6 py-12 text-center">
                     <span className="material-symbols-outlined animate-spin text-4xl text-primary">
                       progress_activity
                     </span>
@@ -507,7 +530,7 @@ export default function ApiKeys() {
                 </tr>
               ) : data?.items.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={10} className="px-6 py-12 text-center text-slate-400">
                     No API keys found
                   </td>
                 </tr>
@@ -675,6 +698,19 @@ export default function ApiKeys() {
                             : 'bg-slate-800 text-slate-400 border border-slate-700'
                         }`}>
                           {t(`apiKeys.serviceTiers.${key.service_tier || 'default'}`)}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap hidden lg:table-cell">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          key.cache_ttl === 'disabled'
+                            ? 'bg-red-900/30 text-red-400 border border-red-800'
+                            : key.cache_ttl === '1h'
+                            ? 'bg-purple-900/30 text-purple-400 border border-purple-800'
+                            : key.cache_ttl === '5m'
+                            ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800'
+                            : 'bg-slate-800 text-slate-400 border border-slate-700'
+                        }`}>
+                          {key.cache_ttl === '5m' ? '5 Min' : key.cache_ttl === '1h' ? '1 Hour' : key.cache_ttl === 'disabled' ? 'Disabled' : 'Default'}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">

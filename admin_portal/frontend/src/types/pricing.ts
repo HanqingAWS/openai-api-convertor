@@ -5,7 +5,8 @@ export interface ModelPricing {
   input_price: number;
   output_price: number;
   cache_read_price?: number;
-  cache_write_price?: number;
+  cache_write_5m_price?: number;
+  cache_write_1h_price?: number;
   status: 'active' | 'deprecated' | 'disabled';
   created_at: number;
   updated_at?: number;
@@ -18,7 +19,8 @@ export interface PricingCreate {
   input_price: number;
   output_price: number;
   cache_read_price?: number;
-  cache_write_price?: number;
+  cache_write_5m_price?: number;
+  cache_write_1h_price?: number;
   status?: 'active' | 'deprecated' | 'disabled';
 }
 
@@ -28,7 +30,8 @@ export interface PricingUpdate {
   input_price?: number;
   output_price?: number;
   cache_read_price?: number;
-  cache_write_price?: number;
+  cache_write_5m_price?: number;
+  cache_write_1h_price?: number;
   status?: 'active' | 'deprecated' | 'disabled';
 }
 

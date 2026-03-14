@@ -24,10 +24,16 @@ class ResponseFormat(BaseModel):
     json_schema: Optional[JsonSchema] = None
 
 
+# Cache control
+class CacheControl(BaseModel):
+    type: str = "ephemeral"
+
+
 # Message content types
 class TextContent(BaseModel):
     type: Literal["text"] = "text"
     text: str
+    cache_control: Optional[CacheControl] = None
 
 
 class ImageURL(BaseModel):
@@ -104,16 +110,24 @@ class ChatCompletionRequest(BaseModel):
     reasoning_effort: Optional[Literal["low", "medium", "high"]] = None
     # Extended thinking (custom extension)
     thinking: Optional[Dict[str, Any]] = Field(default=None, alias="thinking")
+    # Prompt caching control
+    caching: Optional[bool] = None
+    cache_ttl: Optional[str] = None
 
     class Config:
         populate_by_name = True
 
 
 # Response
+class PromptTokensDetails(BaseModel):
+    cached_tokens: int = 0
+
+
 class Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    prompt_tokens_details: Optional[PromptTokensDetails] = None
 
 
 class ChoiceMessage(BaseModel):

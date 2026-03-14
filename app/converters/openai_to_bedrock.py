@@ -15,6 +15,12 @@ REASONING_EFFORT_MAP = {
     "high": 32000,
 }
 
+# Models that do not support prompt caching
+CACHING_UNSUPPORTED_MODELS = {
+    "claude-3-5-haiku",
+    "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+}
+
 
 class OpenAIToBedrockConverter:
     """Converts OpenAI Chat Completion requests to Bedrock Converse format."""
@@ -24,8 +30,14 @@ class OpenAIToBedrockConverter:
         self.dynamodb_client = dynamodb_client
         self._resolved_model_id: Optional[str] = None
 
-    def convert_request(self, request: ChatCompletionRequest) -> Dict[str, Any]:
-        """Convert OpenAI request to Bedrock Converse format."""
+    def convert_request(
+        self, request: ChatCompletionRequest, cache_ttl: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Convert OpenAI request to Bedrock Converse format.
+
+        Args:
+            cache_ttl: Resolved cache TTL ("5m", "1h") or None to disable caching.
+        """
         self._resolved_model_id = self._convert_model_id(request.model)
 
         bedrock_request = {
@@ -33,6 +45,9 @@ class OpenAIToBedrockConverter:
             "messages": self._convert_messages(request.messages),
             "inferenceConfig": self._build_inference_config(request),
         }
+
+        # Check for explicit cache_control in user content
+        has_explicit_cache = self._has_explicit_cache_control(request)
 
         # Extract system message and inject response_format instructions
         system_content = self._extract_system(request.messages)
@@ -48,6 +63,16 @@ class OpenAIToBedrockConverter:
         # Convert tools
         if request.tools and settings.enable_tool_use:
             bedrock_request["toolConfig"] = self._convert_tools(request.tools, request.tool_choice)
+
+        # Inject cache points (automatic mode)
+        if cache_ttl and not has_explicit_cache:
+            if self._model_supports_caching(request.model, self._resolved_model_id):
+                self._inject_cache_points(bedrock_request, cache_ttl)
+
+        # Handle explicit cache_control from client
+        if has_explicit_cache and cache_ttl:
+            if self._model_supports_caching(request.model, self._resolved_model_id):
+                self._apply_explicit_cache_control(bedrock_request, request, cache_ttl)
 
         # Extended thinking: explicit thinking takes precedence over reasoning_effort
         thinking_config = None
@@ -292,6 +317,69 @@ class OpenAIToBedrockConverter:
             return json.loads(s)
         except Exception:
             return {}
+
+    def _model_supports_caching(self, openai_model: str, bedrock_model: str) -> bool:
+        """Check if the model supports prompt caching."""
+        return (
+            openai_model not in CACHING_UNSUPPORTED_MODELS
+            and bedrock_model not in CACHING_UNSUPPORTED_MODELS
+        )
+
+    def _has_explicit_cache_control(self, request: ChatCompletionRequest) -> bool:
+        """Check if any message content has explicit cache_control."""
+        for msg in request.messages:
+            if isinstance(msg.content, list):
+                for part in msg.content:
+                    if hasattr(part, "cache_control") and part.cache_control:
+                        return True
+        return False
+
+    def _inject_cache_points(self, bedrock_request: dict, ttl: str) -> None:
+        """Auto-inject cachePoints for system, last assistant message, and tools."""
+        cache_point = {"cachePoint": {"type": "default", "ttl": ttl}}
+
+        # 1. System prompt end
+        if "system" in bedrock_request:
+            system_text = " ".join(
+                b.get("text", "") for b in bedrock_request["system"] if "text" in b
+            )
+            estimated_tokens = len(system_text) / 4
+            if estimated_tokens >= settings.prompt_cache_min_tokens:
+                bedrock_request["system"].append(dict(cache_point))
+
+        # 2. Last assistant message end (cache conversation history)
+        messages = bedrock_request.get("messages", [])
+        if len(messages) >= 3:
+            for i in range(len(messages) - 2, -1, -1):
+                if messages[i]["role"] == "assistant":
+                    messages[i]["content"].append(dict(cache_point))
+                    break
+
+        # 3. Tools definition end
+        if "toolConfig" in bedrock_request:
+            tools = bedrock_request["toolConfig"].get("tools", [])
+            if tools:
+                tools.append(dict(cache_point))
+
+    def _apply_explicit_cache_control(
+        self, bedrock_request: dict, request: ChatCompletionRequest, ttl: str
+    ) -> None:
+        """Convert explicit cache_control markers to Bedrock cachePoints."""
+        cache_point = {"cachePoint": {"type": "default", "ttl": ttl}}
+
+        # Rebuild messages with cachePoints after marked content
+        for bedrock_msg, orig_msg in zip(
+            bedrock_request.get("messages", []),
+            [m for m in request.messages if m.role != "system"],
+        ):
+            if isinstance(orig_msg.content, list):
+                new_content = []
+                for part, bedrock_block in zip(orig_msg.content, bedrock_msg.get("content", [])):
+                    new_content.append(bedrock_block)
+                    if hasattr(part, "cache_control") and part.cache_control:
+                        new_content.append(dict(cache_point))
+                if new_content:
+                    bedrock_msg["content"] = new_content
 
     def get_resolved_model_id(self) -> Optional[str]:
         return self._resolved_model_id
