@@ -334,32 +334,94 @@ class OpenAIToBedrockConverter:
                         return True
         return False
 
+    def _estimate_tokens(self, text: str) -> float:
+        """Rough token estimate: ~4 chars per token."""
+        return len(text) / 4
+
+    def _estimate_message_tokens(self, message: dict) -> float:
+        """Estimate tokens in a Bedrock message."""
+        content = message.get("content", [])
+        if isinstance(content, str):
+            return self._estimate_tokens(content)
+        total = 0.0
+        for block in content:
+            if isinstance(block, dict) and "text" in block:
+                total += self._estimate_tokens(block["text"])
+        return total
+
+    def _estimate_tools_tokens(self, bedrock_request: dict) -> float:
+        """Estimate tokens in toolConfig definitions."""
+        tool_config = bedrock_request.get("toolConfig", {})
+        tools = tool_config.get("tools", [])
+        if not tools:
+            return 0.0
+        # Rough estimate: serialize tools to string and count chars
+        import json
+        return self._estimate_tokens(json.dumps(tools, default=str))
+
     def _inject_cache_points(self, bedrock_request: dict, ttl: str) -> None:
-        """Auto-inject cachePoints for system, last assistant message, and tools."""
+        """Auto-inject cachePoints for system, tools, and messages.
+
+        Cache points are placed where cumulative token count (system + tools +
+        messages) exceeds the minimum threshold. The placement priority is:
+          1. System prompt end (if system alone >= threshold)
+          2. Tools definition end (if system + tools >= threshold)
+          3. Message boundary (where cumulative tokens first >= threshold)
+        """
         cache_point = {"cachePoint": {"type": "default", "ttl": ttl}}
+        min_tokens = settings.prompt_cache_min_tokens
+        cumulative_tokens = 0.0
+        cache_placed = False
 
         # 1. System prompt end
         if "system" in bedrock_request:
             system_text = " ".join(
                 b.get("text", "") for b in bedrock_request["system"] if "text" in b
             )
-            estimated_tokens = len(system_text) / 4
-            if estimated_tokens >= settings.prompt_cache_min_tokens:
+            cumulative_tokens += self._estimate_tokens(system_text)
+            if cumulative_tokens >= min_tokens:
                 bedrock_request["system"].append(dict(cache_point))
+                cache_placed = True
 
-        # 2. Last assistant message end (cache conversation history)
-        messages = bedrock_request.get("messages", [])
-        if len(messages) >= 3:
-            for i in range(len(messages) - 2, -1, -1):
-                if messages[i]["role"] == "assistant":
-                    messages[i]["content"].append(dict(cache_point))
-                    break
-
-        # 3. Tools definition end
+        # 2. Tools definition end
         if "toolConfig" in bedrock_request:
             tools = bedrock_request["toolConfig"].get("tools", [])
             if tools:
-                tools.append(dict(cache_point))
+                cumulative_tokens += self._estimate_tools_tokens(bedrock_request)
+                if not cache_placed and cumulative_tokens >= min_tokens:
+                    tools.append(dict(cache_point))
+                    cache_placed = True
+                elif cache_placed:
+                    # System already cached; also cache tools separately if substantial
+                    tools.append(dict(cache_point))
+
+        # 3. Messages — walk through and place cache point where cumulative >= threshold
+        messages = bedrock_request.get("messages", [])
+
+        if not cache_placed and len(messages) >= 1:
+            # Try to place before the last message (cache conversation prefix)
+            end_idx = len(messages) - 1 if len(messages) > 1 else len(messages)
+            for i in range(end_idx):
+                cumulative_tokens += self._estimate_message_tokens(messages[i])
+                if cumulative_tokens >= min_tokens and isinstance(messages[i].get("content"), list):
+                    messages[i]["content"].append(dict(cache_point))
+                    cache_placed = True
+                    break
+
+            # If threshold not met before last message, include last message
+            if not cache_placed:
+                last_idx = len(messages) - 1
+                cumulative_tokens += self._estimate_message_tokens(messages[last_idx])
+                if cumulative_tokens >= min_tokens and isinstance(messages[last_idx].get("content"), list):
+                    messages[last_idx]["content"].append(dict(cache_point))
+                    cache_placed = True
+
+        # 4. Multi-turn: also cache last assistant message for conversation history
+        if cache_placed and len(messages) >= 3:
+            for i in range(len(messages) - 2, -1, -1):
+                if messages[i]["role"] == "assistant" and isinstance(messages[i].get("content"), list):
+                    messages[i]["content"].append(dict(cache_point))
+                    break
 
     def _apply_explicit_cache_control(
         self, bedrock_request: dict, request: ChatCompletionRequest, ttl: str

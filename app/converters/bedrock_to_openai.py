@@ -79,15 +79,17 @@ class BedrockToOpenAIConverter:
         if tool_calls:
             finish_reason = "tool_calls"
 
-        # Usage - prompt_tokens includes cached tokens (OpenAI convention)
+        # Usage - prompt_tokens includes all input tokens (OpenAI convention)
+        # Bedrock splits: inputTokens (non-cached) + cacheReadInputTokens + cacheWriteInputTokens
         usage_data = bedrock_response.get("usage", {})
         input_tokens = usage_data.get("inputTokens", 0)
         cache_read = usage_data.get("cacheReadInputTokens", 0)
+        cache_write = usage_data.get("cacheWriteInputTokens", 0)
         output_tokens = usage_data.get("outputTokens", 0)
-        prompt_tokens = input_tokens + cache_read
+        prompt_tokens = input_tokens + cache_read + cache_write
 
         prompt_details = None
-        if cache_read > 0:
+        if cache_read > 0 or cache_write > 0:
             prompt_details = PromptTokensDetails(cached_tokens=cache_read)
 
         usage = Usage(
@@ -247,7 +249,7 @@ class BedrockToOpenAIConverter:
         cache_read = usage.get("cacheReadInputTokens", 0)
         cache_write = usage.get("cacheWriteInputTokens", 0)
         output_tokens = usage.get("outputTokens", 0)
-        prompt_tokens = input_tokens + cache_read
+        prompt_tokens = input_tokens + cache_read + cache_write
 
         # Parse cacheDetails for write TTL
         cache_write_ttl = None
