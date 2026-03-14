@@ -21,5 +21,6 @@ class DashboardStats(BaseModel):
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     total_cached_tokens: int = 0
-    total_cache_write_tokens: int = 0
+    total_cache_write_5m_tokens: int = 0
+    total_cache_write_1h_tokens: int = 0
     total_requests: int = 0

@@ -56,8 +56,9 @@ class ApiKeyResponse(BaseModel):
     # Usage stats (aggregated from usage_stats table)
     total_input_tokens: Optional[int] = 0
     total_output_tokens: Optional[int] = 0
-    total_cached_tokens: Optional[int] = 0       # Cache read tokens
-    total_cache_write_tokens: Optional[int] = 0  # Cache write tokens
+    total_cached_tokens: Optional[int] = 0            # Cache read tokens
+    total_cache_write_5m_tokens: Optional[int] = 0   # Cache write 5m TTL tokens
+    total_cache_write_1h_tokens: Optional[int] = 0   # Cache write 1h TTL tokens
     total_requests: Optional[int] = 0
 
     @field_validator('created_at', 'updated_at', mode='before')

@@ -622,9 +622,18 @@ export default function ApiKeys() {
                               edit_note
                             </span>
                             <span className="text-xs text-white font-medium">
-                              {formatTokens(key.total_cache_write_tokens)}
+                              {formatTokens(key.total_cache_write_5m_tokens)}
                             </span>
-                            <span className="text-xs text-slate-500">{t('apiKeys.cacheWrite')}</span>
+                            <span className="text-xs text-slate-500">write 5m</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-[14px] text-orange-400">
+                              edit_note
+                            </span>
+                            <span className="text-xs text-white font-medium">
+                              {formatTokens(key.total_cache_write_1h_tokens)}
+                            </span>
+                            <span className="text-xs text-slate-500">write 1h</span>
                           </div>
                           <span className="text-[10px] text-slate-500">
                             {(key.total_requests || 0).toLocaleString()} {t('apiKeys.requests')}

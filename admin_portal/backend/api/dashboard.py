@@ -111,7 +111,8 @@ async def get_dashboard_stats():
     total_input_tokens = 0
     total_output_tokens = 0
     total_cached_tokens = 0
-    total_cache_write_tokens = 0
+    total_cache_write_5m_tokens = 0
+    total_cache_write_1h_tokens = 0
     total_requests = 0
 
     for key in all_keys:
@@ -122,7 +123,8 @@ async def get_dashboard_stats():
                 total_input_tokens += int(stats.get("total_input_tokens", 0) or 0)
                 total_output_tokens += int(stats.get("total_output_tokens", 0) or 0)
                 total_cached_tokens += int(stats.get("total_cached_tokens", 0) or 0)
-                total_cache_write_tokens += int(stats.get("total_cache_write_tokens", 0) or 0)
+                total_cache_write_5m_tokens += int(stats.get("total_cache_write_5m_tokens", 0) or 0)
+                total_cache_write_1h_tokens += int(stats.get("total_cache_write_1h_tokens", 0) or 0)
                 total_requests += int(stats.get("total_requests", 0) or 0)
 
     # Get set of models that have pricing configured (Bedrock model IDs)
@@ -161,10 +163,9 @@ async def get_dashboard_stats():
             if not last_key:
                 break
 
-        # Find models that have usage but no pricing (resolve to Bedrock ID for comparison)
+        # Find models that have usage but no pricing
         for model in used_models:
-            bedrock_model_id = _resolve_model_id(model, model_mapping_cache)
-            if bedrock_model_id not in priced_models:
+            if model not in priced_models:
                 models_without_pricing.append(model)
         models_without_pricing = sorted(models_without_pricing)
     except Exception as e:
@@ -184,6 +185,7 @@ async def get_dashboard_stats():
         total_input_tokens=total_input_tokens,
         total_output_tokens=total_output_tokens,
         total_cached_tokens=total_cached_tokens,
-        total_cache_write_tokens=total_cache_write_tokens,
+        total_cache_write_5m_tokens=total_cache_write_5m_tokens,
+        total_cache_write_1h_tokens=total_cache_write_1h_tokens,
         total_requests=total_requests,
     )

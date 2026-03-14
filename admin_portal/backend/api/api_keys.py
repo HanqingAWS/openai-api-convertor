@@ -65,13 +65,15 @@ async def list_api_keys(
             item["total_input_tokens"] = int(stats.get("total_input_tokens", 0))
             item["total_output_tokens"] = int(stats.get("total_output_tokens", 0))
             item["total_cached_tokens"] = int(stats.get("total_cached_tokens", 0))
-            item["total_cache_write_tokens"] = int(stats.get("total_cache_write_tokens", 0))
+            item["total_cache_write_5m_tokens"] = int(stats.get("total_cache_write_5m_tokens", 0))
+            item["total_cache_write_1h_tokens"] = int(stats.get("total_cache_write_1h_tokens", 0))
             item["total_requests"] = int(stats.get("total_requests", 0))
         else:
             item["total_input_tokens"] = 0
             item["total_output_tokens"] = 0
             item["total_cached_tokens"] = 0
-            item["total_cache_write_tokens"] = 0
+            item["total_cache_write_5m_tokens"] = 0
+            item["total_cache_write_1h_tokens"] = 0
             item["total_requests"] = 0
 
     return ApiKeyListResponse(
@@ -293,7 +295,8 @@ async def get_api_key_usage(api_key: str):
             "total_input_tokens": 0,
             "total_output_tokens": 0,
             "total_cached_tokens": 0,
-            "total_cache_write_tokens": 0,
+            "total_cache_write_5m_tokens": 0,
+            "total_cache_write_1h_tokens": 0,
             "total_requests": 0,
         },
         "recent": recent_stats,

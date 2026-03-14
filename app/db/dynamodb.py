@@ -303,7 +303,12 @@ class UsageTracker:
             total_input = sum(int(i.get("prompt_tokens", 0)) for i in items)
             total_output = sum(int(i.get("completion_tokens", 0)) for i in items)
             total_cached = sum(int(i.get("cached_tokens", 0)) for i in items)
-            total_cache_write = sum(int(i.get("cache_write_tokens", 0)) for i in items)
+            total_cache_write_5m = sum(
+                int(i.get("cache_write_tokens", 0)) for i in items if (i.get("cache_write_ttl") or "5m") != "1h"
+            )
+            total_cache_write_1h = sum(
+                int(i.get("cache_write_tokens", 0)) for i in items if i.get("cache_write_ttl") == "1h"
+            )
             total_requests = len(items)
             successful = sum(1 for i in items if i.get("success", True))
 
@@ -321,7 +326,8 @@ class UsageTracker:
                 "total_input_tokens": total_input,
                 "total_output_tokens": total_output,
                 "total_cached_tokens": total_cached,
-                "total_cache_write_tokens": total_cache_write,
+                "total_cache_write_5m_tokens": total_cache_write_5m,
+                "total_cache_write_1h_tokens": total_cache_write_1h,
                 "total_requests": total_requests,
                 "successful_requests": successful,
                 "failed_requests": total_requests - successful,
@@ -334,7 +340,8 @@ class UsageTracker:
                 "total_input_tokens": 0,
                 "total_output_tokens": 0,
                 "total_cached_tokens": 0,
-                "total_cache_write_tokens": 0,
+                "total_cache_write_5m_tokens": 0,
+                "total_cache_write_1h_tokens": 0,
                 "total_requests": 0,
                 "successful_requests": 0,
                 "failed_requests": 0,
@@ -617,7 +624,8 @@ class UsageStatsManager:
         input_tokens: int = 0,
         output_tokens: int = 0,
         cached_tokens: int = 0,
-        cache_write_tokens: int = 0,
+        cache_write_5m_tokens: int = 0,
+        cache_write_1h_tokens: int = 0,
         requests: int = 0,
         cost: float = 0,
     ) -> bool:
@@ -627,14 +635,15 @@ class UsageStatsManager:
                 Key={"api_key": api_key},
                 UpdateExpression=(
                     "ADD #input :input, #output :output, #cached :cached, "
-                    "#cache_write :cache_write, #requests :requests, #cost :cost "
+                    "#cw5m :cw5m, #cw1h :cw1h, #requests :requests, #cost :cost "
                     "SET #updated = :updated"
                 ),
                 ExpressionAttributeNames={
                     "#input": "total_input_tokens",
                     "#output": "total_output_tokens",
                     "#cached": "total_cached_tokens",
-                    "#cache_write": "total_cache_write_tokens",
+                    "#cw5m": "total_cache_write_5m_tokens",
+                    "#cw1h": "total_cache_write_1h_tokens",
                     "#requests": "total_requests",
                     "#cost": "total_cost",
                     "#updated": "updated_at",
@@ -643,7 +652,8 @@ class UsageStatsManager:
                     ":input": input_tokens,
                     ":output": output_tokens,
                     ":cached": cached_tokens,
-                    ":cache_write": cache_write_tokens,
+                    ":cw5m": cache_write_5m_tokens,
+                    ":cw1h": cache_write_1h_tokens,
                     ":requests": requests,
                     ":cost": Decimal(str(cost)),
                     ":updated": int(time.time()),
@@ -702,7 +712,12 @@ class UsageStatsManager:
                 total_input = sum(int(i.get("prompt_tokens", 0)) for i in items)
                 total_output = sum(int(i.get("completion_tokens", 0)) for i in items)
                 total_cached = sum(int(i.get("cached_tokens", 0)) for i in items)
-                total_cache_write = sum(int(i.get("cache_write_tokens", 0)) for i in items)
+                total_cache_write_5m = sum(
+                    int(i.get("cache_write_tokens", 0)) for i in items if (i.get("cache_write_ttl") or "5m") != "1h"
+                )
+                total_cache_write_1h = sum(
+                    int(i.get("cache_write_tokens", 0)) for i in items if i.get("cache_write_ttl") == "1h"
+                )
                 total_requests = len(items)
 
                 # Calculate cost if pricing manager is available
@@ -732,14 +747,15 @@ class UsageStatsManager:
                     Key={"api_key": api_key},
                     UpdateExpression=(
                         "ADD #input :input, #output :output, #cached :cached, "
-                        "#cache_write :cache_write, #requests :requests, #cost :cost "
+                        "#cw5m :cw5m, #cw1h :cw1h, #requests :requests, #cost :cost "
                         "SET #updated = :updated, #last_ts = :last_ts"
                     ),
                     ExpressionAttributeNames={
                         "#input": "total_input_tokens",
                         "#output": "total_output_tokens",
                         "#cached": "total_cached_tokens",
-                        "#cache_write": "total_cache_write_tokens",
+                        "#cw5m": "total_cache_write_5m_tokens",
+                        "#cw1h": "total_cache_write_1h_tokens",
                         "#requests": "total_requests",
                         "#cost": "total_cost",
                         "#updated": "updated_at",
@@ -749,7 +765,8 @@ class UsageStatsManager:
                         ":input": total_input,
                         ":output": total_output,
                         ":cached": total_cached,
-                        ":cache_write": total_cache_write,
+                        ":cw5m": total_cache_write_5m,
+                        ":cw1h": total_cache_write_1h,
                         ":requests": total_requests,
                         ":cost": total_cost,
                         ":updated": int(time.time()),

@@ -156,9 +156,16 @@ export default function Dashboard() {
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-[16px] text-amber-400">edit_note</span>
-              <span className="text-xs text-slate-400">{t('apiKeys.cacheWrite')}</span>
+              <span className="text-xs text-slate-400">Write 5m</span>
             </div>
-            <span className="text-lg font-bold text-white">{formatTokens(stats?.total_cache_write_tokens)}</span>
+            <span className="text-lg font-bold text-white">{formatTokens(stats?.total_cache_write_5m_tokens)}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[16px] text-orange-400">edit_note</span>
+              <span className="text-xs text-slate-400">Write 1h</span>
+            </div>
+            <span className="text-lg font-bold text-white">{formatTokens(stats?.total_cache_write_1h_tokens)}</span>
           </div>
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">

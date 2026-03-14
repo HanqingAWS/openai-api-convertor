@@ -20,8 +20,9 @@ export interface ApiKey {
   // Usage stats (aggregated from usage_stats table)
   total_input_tokens?: number;
   total_output_tokens?: number;
-  total_cached_tokens?: number;      // Cache read tokens
-  total_cache_write_tokens?: number; // Cache write tokens
+  total_cached_tokens?: number;         // Cache read tokens
+  total_cache_write_5m_tokens?: number; // Cache write 5m TTL tokens
+  total_cache_write_1h_tokens?: number; // Cache write 1h TTL tokens
   total_requests?: number;
 }
 

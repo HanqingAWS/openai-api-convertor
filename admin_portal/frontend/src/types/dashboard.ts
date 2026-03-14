@@ -14,6 +14,7 @@ export interface DashboardStats {
   total_input_tokens: number;
   total_output_tokens: number;
   total_cached_tokens: number;
-  total_cache_write_tokens: number;
+  total_cache_write_5m_tokens: number;
+  total_cache_write_1h_tokens: number;
   total_requests: number;
 }
