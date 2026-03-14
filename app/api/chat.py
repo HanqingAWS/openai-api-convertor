@@ -111,7 +111,7 @@ async def create_chat_completion(
                     latency_ms=latency_ms,
                     cached_tokens=cache_usage.get("cached_tokens", 0),
                     cache_write_tokens=cache_usage.get("cache_write_tokens", 0),
-                    cache_write_ttl=cache_usage.get("cache_write_ttl"),
+                    cache_write_ttl=cache_usage.get("cache_write_ttl") or cache_ttl,
                 )
 
             return response
@@ -199,5 +199,5 @@ async def _stream_response(
                 latency_ms=latency_ms,
                 cached_tokens=cached_tokens,
                 cache_write_tokens=cache_write_tokens,
-                cache_write_ttl=cache_write_ttl,
+                cache_write_ttl=cache_write_ttl or cache_ttl,
             )
