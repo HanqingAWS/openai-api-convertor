@@ -301,6 +301,76 @@ response = client.chat.completions.create(
 )
 ```
 
+### 响应格式
+
+#### 非流式响应
+
+```json
+{
+  "id": "chatcmpl-xxxx",
+  "object": "chat.completion",
+  "created": 1773646794,
+  "model": "claude-sonnet-4-6",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello!",
+        "tool_calls": null,
+        "thinking": null
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 4222,
+    "completion_tokens": 5,
+    "total_tokens": 4227,
+    "prompt_tokens_details": {
+      "cached_tokens": 4210
+    },
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 4210,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 0
+    }
+  }
+}
+```
+
+#### 流式响应
+
+请求需设置 `"stream": true`。每个 chunk 通过 SSE（Server-Sent Events）返回：
+
+```
+data: {"id":"chatcmpl-xxxx","object":"chat.completion.chunk","created":...,"model":"claude-sonnet-4-6","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl-xxxx","object":"chat.completion.chunk","created":...,"model":"claude-sonnet-4-6","choices":[{"index":0,"delta":{"content":"Hello!"},"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl-xxxx","object":"chat.completion.chunk","created":...,"model":"claude-sonnet-4-6","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
+
+data: [DONE]
+```
+
+如需在流式响应中获取用量统计，请在请求中加入 `"stream_options": {"include_usage": true}`，最后一个 chunk 会包含完整的 `usage` 字段（格式与非流式一致）。
+
+#### Usage 字段说明
+
+| 字段 | 说明 |
+|------|------|
+| `prompt_tokens` | 总输入 token 数（= inputTokens + cacheRead + cacheWrite） |
+| `completion_tokens` | 输出 token 数 |
+| `total_tokens` | prompt_tokens + completion_tokens |
+| `prompt_tokens_details.cached_tokens` | 从缓存读取的 token 数 |
+| `cache_creation_input_tokens` | 写入缓存的 token 数（对应 Bedrock `cacheWriteInputTokens`） |
+| `cache_read_input_tokens` | 从缓存读取的 token 数（对应 Bedrock `cacheReadInputTokens`） |
+| `cache_creation.ephemeral_5m_input_tokens` | 以 5 分钟 TTL 写入缓存的 token 数 |
+| `cache_creation.ephemeral_1h_input_tokens` | 以 1 小时 TTL 写入缓存的 token 数 |
+
+> `prompt_tokens_details` 和 `cache_creation` 仅在有缓存活动时返回，无缓存时为 `null`。
+
 ### Prompt Caching
 
 Prompt caching is **enabled by default**. The proxy automatically inserts cache points for system prompts, conversation history, and tool definitions. No client-side changes needed.
