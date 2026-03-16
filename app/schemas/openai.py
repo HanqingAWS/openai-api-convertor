@@ -123,11 +123,19 @@ class PromptTokensDetails(BaseModel):
     cached_tokens: int = 0
 
 
+class CacheCreation(BaseModel):
+    ephemeral_5m_input_tokens: int = 0
+    ephemeral_1h_input_tokens: int = 0
+
+
 class Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
     prompt_tokens_details: Optional[PromptTokensDetails] = None
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation: Optional[CacheCreation] = None
 
 
 class ChoiceMessage(BaseModel):

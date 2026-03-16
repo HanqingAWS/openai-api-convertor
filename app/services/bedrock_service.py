@@ -63,7 +63,7 @@ class BedrockService:
             cache_usage = self.bedrock_to_openai.extract_cache_usage(response)
 
             return (
-                self.bedrock_to_openai.convert_response(response, request.model, request_id),
+                self.bedrock_to_openai.convert_response(response, request.model, request_id, cache_ttl=cache_ttl),
                 cache_usage,
             )
 
@@ -122,7 +122,7 @@ class BedrockService:
             # After all events, emit usage chunk if requested
             if include_usage and usage_data:
                 yield self.bedrock_to_openai.build_usage_chunk(
-                    request_id, request.model, usage_data
+                    request_id, request.model, usage_data, cache_ttl=cache_ttl
                 )
 
             # Always emit [DONE]

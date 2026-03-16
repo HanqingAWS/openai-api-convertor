@@ -15,6 +15,7 @@ from app.schemas.openai import (
     FunctionCall,
     Usage,
     PromptTokensDetails,
+    CacheCreation,
 )
 
 
@@ -30,7 +31,8 @@ class BedrockToOpenAIConverter:
     }
 
     def convert_response(
-        self, bedrock_response: Dict[str, Any], model: str, request_id: Optional[str] = None
+        self, bedrock_response: Dict[str, Any], model: str, request_id: Optional[str] = None,
+        cache_ttl: Optional[str] = None,
     ) -> ChatCompletionResponse:
         """Convert Bedrock response to OpenAI ChatCompletion format."""
         response_id = request_id or f"chatcmpl-{uuid4().hex[:24]}"
@@ -89,14 +91,23 @@ class BedrockToOpenAIConverter:
         prompt_tokens = input_tokens + cache_read + cache_write
 
         prompt_details = None
+        cache_creation = None
         if cache_read > 0 or cache_write > 0:
             prompt_details = PromptTokensDetails(cached_tokens=cache_read)
+            ttl = cache_ttl or "5m"
+            cache_creation = CacheCreation(
+                ephemeral_5m_input_tokens=cache_write if ttl == "5m" else 0,
+                ephemeral_1h_input_tokens=cache_write if ttl == "1h" else 0,
+            )
 
         usage = Usage(
             prompt_tokens=prompt_tokens,
             completion_tokens=output_tokens,
             total_tokens=prompt_tokens + output_tokens,
             prompt_tokens_details=prompt_details,
+            cache_creation_input_tokens=cache_write,
+            cache_read_input_tokens=cache_read,
+            cache_creation=cache_creation,
         )
 
         return ChatCompletionResponse(
@@ -286,19 +297,31 @@ class BedrockToOpenAIConverter:
         }
 
     def build_usage_chunk(
-        self, request_id: str, model: str, usage_data: Dict[str, Any]
+        self, request_id: str, model: str, usage_data: Dict[str, Any],
+        cache_ttl: Optional[str] = None,
     ) -> str:
         """Build a final SSE chunk containing usage statistics."""
         prompt_details = None
+        cache_creation = None
         cached = usage_data.get("cached_tokens", 0)
-        if cached > 0:
+        cache_write = usage_data.get("cache_write_tokens", 0)
+
+        if cached > 0 or cache_write > 0:
             prompt_details = PromptTokensDetails(cached_tokens=cached)
+            ttl = cache_ttl or "5m"
+            cache_creation = CacheCreation(
+                ephemeral_5m_input_tokens=cache_write if ttl == "5m" else 0,
+                ephemeral_1h_input_tokens=cache_write if ttl == "1h" else 0,
+            )
 
         usage = Usage(
             prompt_tokens=usage_data.get("prompt_tokens", 0),
             completion_tokens=usage_data.get("completion_tokens", 0),
             total_tokens=usage_data.get("total_tokens", 0),
             prompt_tokens_details=prompt_details,
+            cache_creation_input_tokens=cache_write,
+            cache_read_input_tokens=cached,
+            cache_creation=cache_creation,
         )
         chunk = ChatCompletionChunk(
             id=request_id,
