@@ -3,6 +3,7 @@ import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
 import { NetworkStack } from '../lib/network-stack';
 import { DynamoDBStack } from '../lib/dynamodb-stack';
+import { CognitoStack } from '../lib/cognito-stack';
 import { ECSStack } from '../lib/ecs-stack';
 import { getConfig } from '../config/config';
 
@@ -28,8 +29,16 @@ const dynamodbStack = new DynamoDBStack(app, `OpenAIProxy-DynamoDB-${config.envi
   config,
 });
 
+// Cognito Stack (for admin portal authentication)
+const cognitoStack = config.adminPortalEnabled
+  ? new CognitoStack(app, `OpenAIProxy-Cognito-${config.environmentName}`, {
+      env,
+      config,
+    })
+  : undefined;
+
 // ECS Stack
-new ECSStack(app, `OpenAIProxy-ECS-${config.environmentName}`, {
+const ecsStack = new ECSStack(app, `OpenAIProxy-ECS-${config.environmentName}`, {
   env,
   config,
   vpc: networkStack.vpc,
@@ -40,4 +49,10 @@ new ECSStack(app, `OpenAIProxy-ECS-${config.environmentName}`, {
   modelMappingTable: dynamodbStack.modelMappingTable,
   pricingTable: dynamodbStack.pricingTable,
   usageStatsTable: dynamodbStack.usageStatsTable,
+  cognitoUserPoolId: cognitoStack?.userPool.userPoolId,
+  cognitoClientId: cognitoStack?.userPoolClient.userPoolClientId,
 });
+
+if (cognitoStack) {
+  ecsStack.addDependency(cognitoStack);
+}

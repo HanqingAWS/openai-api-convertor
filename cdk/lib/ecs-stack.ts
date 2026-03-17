@@ -21,6 +21,9 @@ export interface ECSStackProps extends cdk.StackProps {
   modelMappingTable: dynamodb.Table;
   pricingTable: dynamodb.Table;
   usageStatsTable: dynamodb.Table;
+  // Cognito (optional - for admin portal)
+  cognitoUserPoolId?: string;
+  cognitoClientId?: string;
 }
 
 export class ECSStack extends cdk.Stack {
@@ -34,6 +37,7 @@ export class ECSStack extends cdk.Stack {
     const { config, vpc, albSecurityGroup, ecsSecurityGroup } = props;
     const { apiKeysTable, usageTable, modelMappingTable } = props;
     const { pricingTable, usageStatsTable } = props;
+    const { cognitoUserPoolId, cognitoClientId } = props;
 
     // ECS Cluster
     this.cluster = new ecs.Cluster(this, 'Cluster', {
@@ -235,7 +239,7 @@ export class ECSStack extends cdk.Stack {
       this.createAdminPortalService(
         config, vpc, ecsSecurityGroup, taskExecutionRole, taskRole,
         cpuArchitecture, dockerPlatform, apiKeysTable, usageTable, modelMappingTable,
-        pricingTable, usageStatsTable
+        pricingTable, usageStatsTable, cognitoUserPoolId, cognitoClientId
       );
     }
 
@@ -279,6 +283,8 @@ export class ECSStack extends cdk.Stack {
     modelMappingTable: dynamodb.Table,
     pricingTable: dynamodb.Table,
     usageStatsTable: dynamodb.Table,
+    cognitoUserPoolId?: string,
+    cognitoClientId?: string,
   ): void {
     // Admin Portal Log Group
     const adminLogGroup = new logs.LogGroup(this, 'AdminPortalLogGroup', {
@@ -320,7 +326,12 @@ export class ECSStack extends cdk.Stack {
         DYNAMODB_MODEL_MAPPING_TABLE: modelMappingTable.tableName,
         DYNAMODB_PRICING_TABLE: pricingTable.tableName,
         DYNAMODB_USAGE_STATS_TABLE: usageStatsTable.tableName,
-        SKIP_AUTH: 'true',
+        // Cognito (if configured)
+        ...(cognitoUserPoolId && { COGNITO_USER_POOL_ID: cognitoUserPoolId }),
+        ...(cognitoClientId && { COGNITO_CLIENT_ID: cognitoClientId }),
+        COGNITO_REGION: config.region,
+        // Static file serving
+        SERVE_STATIC_FILES: 'true',
       },
       portMappings: [
         { containerPort: config.adminPortalContainerPort, protocol: ecs.Protocol.TCP },
