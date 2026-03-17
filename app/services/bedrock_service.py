@@ -1,4 +1,5 @@
 """Bedrock service for invoking Claude models."""
+import asyncio
 import json
 from typing import Any, AsyncGenerator, Dict, Optional
 from uuid import uuid4
@@ -87,6 +88,9 @@ class BedrockService:
         Yields SSE strings. If stream_options.include_usage is True,
         a final chunk with usage is emitted before [DONE].
         The last yielded item may be a special "__usage__:..." line for internal tracking.
+
+        Uses a thread pool for the synchronous boto3 stream iteration to avoid
+        blocking the async event loop, enabling true incremental streaming.
         """
         request_id = request_id or f"chatcmpl-{uuid4().hex[:24]}"
         include_usage = (
@@ -94,53 +98,72 @@ class BedrockService:
             and request.stream_options.include_usage
         )
 
-        try:
-            bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
-            model_id = bedrock_request.pop("modelId")
+        _SENTINEL = object()
+        queue: asyncio.Queue = asyncio.Queue()
 
-            response = self.client.converse_stream(modelId=model_id, **bedrock_request)
+        def _stream_in_thread():
+            """Run synchronous boto3 stream in a thread, putting results into the queue."""
+            loop = asyncio.get_event_loop()
+            try:
+                bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
+                model_id = bedrock_request.pop("modelId")
+                response = self.client.converse_stream(modelId=model_id, **bedrock_request)
 
-            current_index = 0
-            usage_data = None
+                current_index = 0
+                usage_data = None
 
-            for event in response.get("stream", []):
-                # Check for usage in metadata event
-                extracted = self.bedrock_to_openai.extract_stream_usage(event)
-                if extracted:
-                    usage_data = extracted
+                for event in response.get("stream", []):
+                    extracted = self.bedrock_to_openai.extract_stream_usage(event)
+                    if extracted:
+                        usage_data = extracted
 
-                sse_events = self.bedrock_to_openai.convert_stream_event(
-                    event, request.model, request_id, current_index
+                    sse_events = self.bedrock_to_openai.convert_stream_event(
+                        event, request.model, request_id, current_index
+                    )
+                    for sse in sse_events:
+                        loop.call_soon_threadsafe(queue.put_nowait, sse)
+
+                    if "contentBlockStart" in event:
+                        current_index += 1
+
+                # Emit usage chunk if requested
+                if include_usage and usage_data:
+                    chunk = self.bedrock_to_openai.build_usage_chunk(
+                        request_id, request.model, usage_data, cache_ttl=cache_ttl
+                    )
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+
+                # Always emit [DONE]
+                loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
+
+                # Emit internal usage marker
+                if usage_data:
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait, f"__usage__:{json.dumps(usage_data)}"
+                    )
+
+            except Exception as e:
+                error_type = "server_error"
+                if "ValidationException" in type(e).__name__:
+                    error_type = "validation_error"
+                elif "ThrottlingException" in type(e).__name__:
+                    error_type = "rate_limit_error"
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    f"data: {json.dumps({'error': {'message': str(e), 'type': error_type}})}\n\n"
                 )
-                for sse in sse_events:
-                    yield sse
+                loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
 
-                # Track content block index
-                if "contentBlockStart" in event:
-                    current_index += 1
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, _stream_in_thread)
 
-            # After all events, emit usage chunk if requested
-            if include_usage and usage_data:
-                yield self.bedrock_to_openai.build_usage_chunk(
-                    request_id, request.model, usage_data, cache_ttl=cache_ttl
-                )
-
-            # Always emit [DONE]
-            yield "data: [DONE]\n\n"
-
-            # Emit internal usage marker for UsageTracker (not sent to client)
-            if usage_data:
-                yield f"__usage__:{json.dumps(usage_data)}"
-
-        except self.client.exceptions.ValidationException as e:
-            yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'validation_error'}})}\n\n"
-            yield "data: [DONE]\n\n"
-        except self.client.exceptions.ThrottlingException as e:
-            yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'rate_limit_error'}})}\n\n"
-            yield "data: [DONE]\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'server_error'}})}\n\n"
-            yield "data: [DONE]\n\n"
+        while True:
+            item = await queue.get()
+            if item is _SENTINEL:
+                break
+            yield item
 
     def list_models(self) -> list[Dict[str, Any]]:
         """List available models."""
