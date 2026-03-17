@@ -92,7 +92,7 @@
   },
   "apiKeys": {
     "title": "User & API Key Management",
-    "subtitle": "Manage access, monitor usage, and set limits for Anthropic API conversion.",
+    "subtitle": "Manage access, monitor usage, and set limits for OpenAI API proxy.",
     "createNewKey": "Create New Key",
     "export": "Export",
     "searchPlaceholder": "Search keys by name, prefix, or owner ID...",

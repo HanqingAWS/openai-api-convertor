@@ -129,7 +129,7 @@ export default function Login() {
             </span>
           </div>
           <h2 className="text-white text-lg font-bold leading-tight tracking-[-0.015em] hidden sm:block">
-            anthropic_api_proxy
+            openai_api_proxy
           </h2>
         </div>
 
@@ -608,7 +608,7 @@ export default function Login() {
           {/* Footer */}
           <div className="bg-input-bg/50 p-4 border-t border-border-dark flex justify-center">
             <p className="text-gray-500 text-xs font-normal leading-normal text-center">
-              2024 anthropic_api_proxy. v1.0.0
+              2024 openai_api_proxy. v1.0.0
             </p>
           </div>
         </div>

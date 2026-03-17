@@ -92,7 +92,7 @@
   },
   "apiKeys": {
     "title": "用户与 API 密钥管理",
-    "subtitle": "管理访问权限、监控使用情况并设置 Anthropic API 转换限制。",
+    "subtitle": "管理访问权限、监控使用情况并设置 OpenAI API 代理限制。",
     "createNewKey": "创建新密钥",
     "export": "导出",
     "searchPlaceholder": "按名称、前缀或所有者 ID 搜索密钥...",

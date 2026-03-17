@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI application
 app = FastAPI(
-    title="Anthropic API Proxy - Admin Portal",
+    title="OpenAI API Proxy - Admin Portal",
     description="Administration interface for managing API keys and model pricing",
     version="1.0.0",
     docs_url="/docs",
