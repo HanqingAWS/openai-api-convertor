@@ -415,10 +415,31 @@ response = client.chat.completions.create(
 
 - API Key Cache TTL 设为 **Proxy Default**（空值）时，回退到全局配置
 - 全局开关 `ENABLE_PROMPT_CACHING=false` 将完全禁用缓存，忽略以上所有设置
-- **最小 Token 阈值**：Prompt 内容低于 `PROMPT_CACHE_MIN_TOKENS`（默认 1024，与 Bedrock 最低要求一致）时不会插入缓存点。缓存点基于累计 token 数（system + tools + messages）判断放置位置
 - 缓存点自动注入位置：system prompt 末尾、tools 定义末尾、对话历史中的 assistant 消息末尾、或累计 token 首次超过阈值的消息末尾
 
 > Note: `claude-3-5-haiku` 不支持 Prompt Caching，对不支持的模型自动跳过缓存。
+
+#### 最小缓存 Token 阈值
+
+Bedrock 对不同模型有不同的最小缓存 token 要求，低于阈值的请求即使插入了缓存点也不会实际缓存。代理会根据模型自动使用对应阈值，只有累计 token 数（system + tools + messages）达到阈值时才会插入缓存点：
+
+| 模型 | 最小缓存 Token 数 |
+|------|-------------------|
+| claude-sonnet-4-5 | 1,024 |
+| claude-sonnet-4-6 | 2,048 |
+| claude-opus-4-5 | 4,096 |
+| claude-opus-4-6 | 4,096 |
+| claude-haiku-4-5 | 2,048 |
+
+环境变量 `PROMPT_CACHE_MIN_TOKENS`（默认 1024）作为未在上表中的模型的回退值。
+
+#### Token 估算逻辑
+
+缓存点注入依赖 token 数估算来判断是否达到阈值。估算规则：
+- **英文/拉丁字符**：约 4 字符 ≈ 1 token
+- **中日韩（CJK）字符**：约 1.5 字符 ≈ 1 token
+
+如需调整估算精度，修改 `app/converters/openai_to_bedrock.py` 中的 `_estimate_tokens()` 方法。如需修改模型阈值，修改同文件中的 `MODEL_CACHE_MIN_TOKENS` 字典。
 
 ---
 
@@ -442,7 +463,7 @@ response = client.chat.completions.create(
 | `ENABLE_TOOL_USE` | 启用工具调用 | true |
 | `ENABLE_EXTENDED_THINKING` | 启用扩展思考 | true |
 | `ENABLE_PROMPT_CACHING` | 启用 Prompt Caching | true |
-| `PROMPT_CACHE_MIN_TOKENS` | 最小缓存 token 数（低于此值不缓存） | 1024 |
+| `PROMPT_CACHE_MIN_TOKENS` | 最小缓存 token 数回退值（已知模型使用内置阈值，见上表） | 1024 |
 | `DEFAULT_CACHE_TTL` | 默认缓存 TTL（`5m` 或 `1h`） | 5m |
 | `SKIP_AUTH` | Admin Portal 跳过认证 | true |
 | `COGNITO_USER_POOL_ID` | Cognito User Pool ID | - |

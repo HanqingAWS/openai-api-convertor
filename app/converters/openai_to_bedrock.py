@@ -21,6 +21,15 @@ CACHING_UNSUPPORTED_MODELS = {
     "us.anthropic.claude-3-5-haiku-20241022-v1:0",
 }
 
+# Per-model minimum cacheable token thresholds (Bedrock actual, not documented)
+MODEL_CACHE_MIN_TOKENS = {
+    "claude-sonnet-4-5": 1024,
+    "claude-sonnet-4-6": 2048,
+    "claude-opus-4-5": 4096,
+    "claude-opus-4-6": 4096,
+    "claude-haiku-4-5": 2048,
+}
+
 
 class OpenAIToBedrockConverter:
     """Converts OpenAI Chat Completion requests to Bedrock Converse format."""
@@ -67,7 +76,7 @@ class OpenAIToBedrockConverter:
         # Inject cache points (automatic mode)
         if cache_ttl and not has_explicit_cache:
             if self._model_supports_caching(request.model, self._resolved_model_id):
-                self._inject_cache_points(bedrock_request, cache_ttl)
+                self._inject_cache_points(bedrock_request, cache_ttl, request.model)
 
         # Handle explicit cache_control from client
         if has_explicit_cache and cache_ttl:
@@ -335,8 +344,19 @@ class OpenAIToBedrockConverter:
         return False
 
     def _estimate_tokens(self, text: str) -> float:
-        """Rough token estimate: ~4 chars per token."""
-        return len(text) / 4
+        """Rough token estimate accounting for CJK characters.
+
+        English/Latin: ~4 chars per token.
+        CJK (Chinese/Japanese/Korean): ~1.5 chars per token.
+        """
+        cjk_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff'
+                        or '\u3400' <= c <= '\u4dbf'
+                        or '\u3000' <= c <= '\u303f'
+                        or '\u3040' <= c <= '\u309f'
+                        or '\u30a0' <= c <= '\u30ff'
+                        or '\uac00' <= c <= '\ud7af')
+        other_chars = len(text) - cjk_chars
+        return cjk_chars / 1.5 + other_chars / 4
 
     def _estimate_message_tokens(self, message: dict) -> float:
         """Estimate tokens in a Bedrock message."""
@@ -359,7 +379,7 @@ class OpenAIToBedrockConverter:
         import json
         return self._estimate_tokens(json.dumps(tools, default=str))
 
-    def _inject_cache_points(self, bedrock_request: dict, ttl: str) -> None:
+    def _inject_cache_points(self, bedrock_request: dict, ttl: str, model: str = "") -> None:
         """Auto-inject cachePoints for system, tools, and messages.
 
         Cache points are placed where cumulative token count (system + tools +
@@ -369,7 +389,7 @@ class OpenAIToBedrockConverter:
           3. Message boundary (where cumulative tokens first >= threshold)
         """
         cache_point = {"cachePoint": {"type": "default", "ttl": ttl}}
-        min_tokens = settings.prompt_cache_min_tokens
+        min_tokens = MODEL_CACHE_MIN_TOKENS.get(model, settings.prompt_cache_min_tokens)
         cumulative_tokens = 0.0
         cache_placed = False
 
@@ -399,22 +419,12 @@ class OpenAIToBedrockConverter:
         messages = bedrock_request.get("messages", [])
 
         if not cache_placed and len(messages) >= 1:
-            # Try to place before the last message (cache conversation prefix)
-            end_idx = len(messages) - 1 if len(messages) > 1 else len(messages)
-            for i in range(end_idx):
+            for i in range(len(messages)):
                 cumulative_tokens += self._estimate_message_tokens(messages[i])
                 if cumulative_tokens >= min_tokens and isinstance(messages[i].get("content"), list):
                     messages[i]["content"].append(dict(cache_point))
                     cache_placed = True
                     break
-
-            # If threshold not met before last message, include last message
-            if not cache_placed:
-                last_idx = len(messages) - 1
-                cumulative_tokens += self._estimate_message_tokens(messages[last_idx])
-                if cumulative_tokens >= min_tokens and isinstance(messages[last_idx].get("content"), list):
-                    messages[last_idx]["content"].append(dict(cache_point))
-                    cache_placed = True
 
         # 4. Multi-turn: also cache last assistant message for conversation history
         if cache_placed and len(messages) >= 3:
