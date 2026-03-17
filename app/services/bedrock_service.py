@@ -100,10 +100,9 @@ class BedrockService:
 
         _SENTINEL = object()
         queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
 
         def _stream_in_thread():
-            """Run synchronous boto3 stream in a thread, putting results into the queue."""
-            loop = asyncio.get_event_loop()
             try:
                 bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
                 model_id = bedrock_request.pop("modelId")
@@ -156,7 +155,6 @@ class BedrockService:
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
 
-        loop = asyncio.get_event_loop()
         loop.run_in_executor(None, _stream_in_thread)
 
         while True:
