@@ -90,6 +90,8 @@ CDK_PLATFORM=arm64 npx cdk bootstrap -c environment=prod
 CDK_PLATFORM=arm64 npx cdk deploy --all -c environment=prod --require-approval never
 
 # 仅更新 ECS 服务（代码变更后快速部署）
+git fetch origin && git reset --hard origin/main
+cd cdk
 CDK_PLATFORM=arm64 npx cdk deploy OpenAIProxy-ECS-prod -c environment=prod --exclusively --require-approval never
 ```
 
