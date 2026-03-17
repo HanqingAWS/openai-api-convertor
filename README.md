@@ -127,12 +127,28 @@ curl http://$ALB_DNS/v1/chat/completions \
     "messages": [{"role": "user", "content": "Hello!"}],
     "max_tokens": 200
   }'
-
-# 访问管理后台
-open http://$ALB_DNS/admin/
 ```
 
 API 服务启动时会自动初始化模型定价数据，无需手动 seed。
+
+### 创建管理员账号
+
+Admin Portal 使用 Cognito 认证，部署完成后需创建管理员账号：
+
+```bash
+# 创建管理员用户（会生成临时密码）
+./scripts/create-admin-user.sh -e prod -r us-west-2 --email admin@example.com
+
+# 指定临时密码（可选）
+./scripts/create-admin-user.sh -e prod -r us-west-2 --email admin@example.com --password 'TempPass1234'
+```
+
+创建成功后，脚本会输出临时密码和 Admin Portal 地址。首次登录需修改密码（要求：10+ 字符，包含大小写字母和数字）。
+
+```bash
+# 访问管理后台
+open http://$ALB_DNS/admin/
+```
 
 ### ECS Task IAM 权限
 
