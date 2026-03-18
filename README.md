@@ -86,24 +86,14 @@ export AWS_REGION=us-west-2
 # Bootstrap（首次部署需要，每个 Region 只需执行一次）
 CDK_PLATFORM=arm64 npx cdk bootstrap -c environment=prod
 
-# 首次部署：部署所有 Stacks（Network → DynamoDB → Cognito → ECS）
-./scripts/deploy.sh -e prod -r us-west-2
+# 部署所有 Stacks
+CDK_PLATFORM=arm64 npx cdk deploy --all -c environment=prod --require-approval never
 
-# 代码更新后快速部署（自动检测并部署缺失的依赖 Stack）
+# 仅更新 ECS 服务（代码变更后快速部署）
 git fetch origin && git reset --hard origin/main
-./scripts/deploy.sh -e prod -r us-west-2 -s ecs
+cd cdk
+CDK_PLATFORM=arm64 npx cdk deploy OpenAIProxy-ECS-prod -c environment=prod --exclusively --require-approval never
 ```
-
-部署脚本支持以下选项：
-
-| 选项 | 说明 | 默认值 |
-|------|------|--------|
-| `-e, --environment` | 环境 (dev/prod) | prod |
-| `-r, --region` | AWS Region | $AWS_REGION 或 us-west-2 |
-| `-p, --platform` | 平台 (arm64/amd64) | arm64 |
-| `-s, --stack` | 部署范围 (all/ecs/cognito) | all |
-
-> 使用 `-s ecs` 快速更新时，脚本会自动检测 Cognito Stack 是否存在，如未部署会先自动部署 Cognito。
 
 `CDK_PLATFORM` 支持 `arm64`（Graviton，推荐，成本更低）和 `amd64`。
 
