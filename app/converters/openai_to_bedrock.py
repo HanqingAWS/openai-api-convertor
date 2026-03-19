@@ -269,7 +269,7 @@ class OpenAIToBedrockConverter:
                                 if tool.function.parameters
                                 else {},
                                 "required": tool.function.parameters.required
-                                if tool.function.parameters
+                                if tool.function.parameters and tool.function.parameters.required
                                 else [],
                             }
                         },
