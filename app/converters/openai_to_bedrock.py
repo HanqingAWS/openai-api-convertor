@@ -127,18 +127,26 @@ class OpenAIToBedrockConverter:
         return openai_model_id
 
     def _convert_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
-        """Convert messages, excluding system messages."""
+        """Convert messages, excluding system messages.
+
+        Consecutive messages with the same Bedrock role (e.g. multiple tool
+        results that all map to "user") are merged into a single message,
+        because Bedrock requires strictly alternating user/assistant turns.
+        """
         bedrock_messages = []
 
         for msg in messages:
             if msg.role == "system":
                 continue  # System handled separately
 
-            bedrock_msg = {
-                "role": "user" if msg.role in ("user", "tool") else "assistant",
-                "content": self._convert_content(msg),
-            }
-            bedrock_messages.append(bedrock_msg)
+            role = "user" if msg.role in ("user", "tool") else "assistant"
+            content = self._convert_content(msg)
+
+            # Merge into previous message when roles match (consecutive tool results, etc.)
+            if bedrock_messages and bedrock_messages[-1]["role"] == role:
+                bedrock_messages[-1]["content"].extend(content)
+            else:
+                bedrock_messages.append({"role": role, "content": content})
 
         return bedrock_messages
 
@@ -239,8 +247,9 @@ class OpenAIToBedrockConverter:
     def _build_inference_config(self, request: ChatCompletionRequest) -> Dict[str, Any]:
         """Build inference configuration."""
         config = {}
-        if request.max_tokens:
-            config["maxTokens"] = request.max_tokens
+        max_tok = request.max_completion_tokens or request.max_tokens
+        if max_tok:
+            config["maxTokens"] = max_tok
         if request.temperature is not None:
             config["temperature"] = min(request.temperature, 1.0)  # Bedrock max is 1.0
         elif request.top_p is not None:
@@ -436,22 +445,47 @@ class OpenAIToBedrockConverter:
     def _apply_explicit_cache_control(
         self, bedrock_request: dict, request: ChatCompletionRequest, ttl: str
     ) -> None:
-        """Convert explicit cache_control markers to Bedrock cachePoints."""
-        cache_point = {"cachePoint": {"type": "default", "ttl": ttl}}
+        """Convert explicit cache_control markers to Bedrock cachePoints.
 
-        # Rebuild messages with cachePoints after marked content
-        for bedrock_msg, orig_msg in zip(
-            bedrock_request.get("messages", []),
-            [m for m in request.messages if m.role != "system"],
-        ):
+        Walks the original messages and tracks which Bedrock message each one
+        was merged into (via role-based index mapping), so cache_control
+        markers land on the correct Bedrock content block.
+        """
+        cache_point = {"cachePoint": {"type": "default", "ttl": ttl}}
+        bedrock_messages = bedrock_request.get("messages", [])
+
+        # Build mapping: for each non-system original message, find its Bedrock message index
+        # and the offset within that Bedrock message's content list.
+        bedrock_idx = -1
+        block_offset = 0
+        prev_role = None
+
+        for orig_msg in request.messages:
+            if orig_msg.role == "system":
+                continue
+
+            role = "user" if orig_msg.role in ("user", "tool") else "assistant"
+            if role != prev_role:
+                bedrock_idx += 1
+                block_offset = 0
+                prev_role = role
+
+            if bedrock_idx >= len(bedrock_messages):
+                break
+
+            bedrock_msg = bedrock_messages[bedrock_idx]
             if isinstance(orig_msg.content, list):
-                new_content = []
-                for part, bedrock_block in zip(orig_msg.content, bedrock_msg.get("content", [])):
-                    new_content.append(bedrock_block)
+                for part in orig_msg.content:
                     if hasattr(part, "cache_control") and part.cache_control:
-                        new_content.append(dict(cache_point))
-                if new_content:
-                    bedrock_msg["content"] = new_content
+                        # Insert cachePoint after the corresponding block
+                        insert_pos = block_offset + 1
+                        bedrock_content = bedrock_msg.get("content", [])
+                        if insert_pos <= len(bedrock_content):
+                            bedrock_content.insert(insert_pos, dict(cache_point))
+                            block_offset += 1  # account for inserted element
+                    block_offset += 1
+            else:
+                block_offset += 1
 
     def get_resolved_model_id(self) -> Optional[str]:
         return self._resolved_model_id
