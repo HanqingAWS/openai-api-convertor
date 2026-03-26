@@ -22,6 +22,10 @@ from app.schemas.openai import (
 class BedrockToOpenAIConverter:
     """Converts Bedrock Converse responses to OpenAI format."""
 
+    def __init__(self):
+        # Streaming state: maps content block index -> (toolUseId, name)
+        self._stream_tool_state: Dict[int, Dict[str, str]] = {}
+
     STOP_REASON_MAP = {
         "end_turn": "stop",
         "stop_sequence": "stop",
@@ -136,6 +140,7 @@ class BedrockToOpenAIConverter:
 
         # Message start
         if "messageStart" in event:
+            self._stream_tool_state.clear()
             chunk = ChatCompletionChunk(
                 id=request_id,
                 model=model,
@@ -148,6 +153,39 @@ class BedrockToOpenAIConverter:
                 ],
             )
             events.append(f"data: {chunk.model_dump_json()}\n\n")
+
+        # Content block start (for tool use) — must be before delta to populate state
+        elif "contentBlockStart" in event:
+            block_index = event["contentBlockStart"].get("contentBlockIndex", current_index)
+            start = event["contentBlockStart"].get("start", {})
+            if "toolUse" in start:
+                tu = start["toolUse"]
+                tool_id = tu.get("toolUseId", f"call_{current_index}")
+                tool_name = tu.get("name", "")
+                # Save state so subsequent deltas can reference it
+                self._stream_tool_state[block_index] = {
+                    "id": tool_id, "name": tool_name
+                }
+                tool_call = ToolCall(
+                    id=tool_id,
+                    type="function",
+                    function=FunctionCall(
+                        name=tool_name,
+                        arguments="",
+                    ),
+                )
+                chunk = ChatCompletionChunk(
+                    id=request_id,
+                    model=model,
+                    choices=[
+                        StreamChoice(
+                            index=0,
+                            delta=DeltaMessage(tool_calls=[tool_call]),
+                            finish_reason=None,
+                        )
+                    ],
+                )
+                events.append(f"data: {chunk.model_dump_json()}\n\n")
 
         # Content block delta
         elif "contentBlockDelta" in event:
@@ -169,16 +207,19 @@ class BedrockToOpenAIConverter:
 
             elif "toolUse" in delta:
                 tu = delta["toolUse"]
-                # Tool call streaming - send partial arguments
                 if "input" in tu:
-                    # Bedrock sends input as string chunks
                     input_chunk = tu.get("input", "")
                     if input_chunk:
+                        # Look up id/name from contentBlockStart state using block index
+                        block_index = event["contentBlockDelta"].get("contentBlockIndex", current_index)
+                        state = self._stream_tool_state.get(
+                            block_index, {"id": f"call_{current_index}", "name": ""}
+                        )
                         tool_call = ToolCall(
-                            id=tu.get("toolUseId", f"call_{current_index}"),
+                            id=state["id"],
                             type="function",
                             function=FunctionCall(
-                                name=tu.get("name", ""),
+                                name=state["name"],
                                 arguments=input_chunk,
                             ),
                         )
@@ -194,32 +235,6 @@ class BedrockToOpenAIConverter:
                             ],
                         )
                         events.append(f"data: {chunk.model_dump_json()}\n\n")
-
-        # Content block start (for tool use)
-        elif "contentBlockStart" in event:
-            start = event["contentBlockStart"].get("start", {})
-            if "toolUse" in start:
-                tu = start["toolUse"]
-                tool_call = ToolCall(
-                    id=tu.get("toolUseId", f"call_{current_index}"),
-                    type="function",
-                    function=FunctionCall(
-                        name=tu.get("name", ""),
-                        arguments="",
-                    ),
-                )
-                chunk = ChatCompletionChunk(
-                    id=request_id,
-                    model=model,
-                    choices=[
-                        StreamChoice(
-                            index=0,
-                            delta=DeltaMessage(tool_calls=[tool_call]),
-                            finish_reason=None,
-                        )
-                    ],
-                )
-                events.append(f"data: {chunk.model_dump_json()}\n\n")
 
         # Message stop
         elif "messageStop" in event:
