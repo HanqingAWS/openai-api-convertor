@@ -23,8 +23,9 @@ class BedrockToOpenAIConverter:
     """Converts Bedrock Converse responses to OpenAI format."""
 
     def __init__(self):
-        # Streaming state: maps content block index -> (toolUseId, name)
-        self._stream_tool_state: Dict[int, Dict[str, str]] = {}
+        # Streaming state: maps content block index -> (toolUseId, name, tool_call_index)
+        self._stream_tool_state: Dict[int, Dict[str, Any]] = {}
+        self._stream_tool_call_count: int = 0
 
     STOP_REASON_MAP = {
         "end_turn": "stop",
@@ -141,6 +142,7 @@ class BedrockToOpenAIConverter:
         # Message start
         if "messageStart" in event:
             self._stream_tool_state.clear()
+            self._stream_tool_call_count = 0
             chunk = ChatCompletionChunk(
                 id=request_id,
                 model=model,
@@ -162,11 +164,14 @@ class BedrockToOpenAIConverter:
                 tu = start["toolUse"]
                 tool_id = tu.get("toolUseId", f"call_{current_index}")
                 tool_name = tu.get("name", "")
+                tool_call_idx = self._stream_tool_call_count
+                self._stream_tool_call_count += 1
                 # Save state so subsequent deltas can reference it
                 self._stream_tool_state[block_index] = {
-                    "id": tool_id, "name": tool_name
+                    "id": tool_id, "name": tool_name, "index": tool_call_idx
                 }
                 tool_call = ToolCall(
+                    index=tool_call_idx,
                     id=tool_id,
                     type="function",
                     function=FunctionCall(
@@ -210,12 +215,13 @@ class BedrockToOpenAIConverter:
                 if "input" in tu:
                     input_chunk = tu.get("input", "")
                     if input_chunk:
-                        # Look up id/name from contentBlockStart state using block index
+                        # Look up id/name/index from contentBlockStart state using block index
                         block_index = event["contentBlockDelta"].get("contentBlockIndex", current_index)
                         state = self._stream_tool_state.get(
-                            block_index, {"id": f"call_{current_index}", "name": ""}
+                            block_index, {"id": f"call_{current_index}", "name": "", "index": 0}
                         )
                         tool_call = ToolCall(
+                            index=state["index"],
                             id=state["id"],
                             type="function",
                             function=FunctionCall(

@@ -114,7 +114,7 @@ async def create_chat_completion(
                     cache_write_ttl=cache_usage.get("cache_write_ttl") or cache_ttl,
                 )
 
-            return response
+            return JSONResponse(content=response.model_dump(exclude_none=True))
 
     except HTTPException:
         raise

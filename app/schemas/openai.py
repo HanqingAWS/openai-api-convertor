@@ -73,6 +73,7 @@ class FunctionCall(BaseModel):
 
 
 class ToolCall(BaseModel):
+    index: Optional[int] = None
     id: str
     type: Literal["function"] = "function"
     function: FunctionCall
