@@ -384,20 +384,30 @@ class ModelMappingManager:
             },
         )
 
-    def list_mappings(self) -> List[Dict[str, str]]:
-        """List all model mappings. Returns anthropic_model_id for admin portal compatibility."""
+    def list_mappings(self) -> List[Dict[str, Any]]:
+        """List all model mappings. Returns anthropic_model_id for admin portal compatibility.
+
+        updated_at is returned as a Unix timestamp (int) parsed from the stored
+        ISO-8601 string.
+        """
         try:
             response = self.client.scan(TableName=self.table_name)
             mappings = []
             for item in response.get("Items", []):
                 openai_id = item.get("openai_model_id", {}).get("S", "")
                 bedrock_id = item.get("bedrock_model_id", {}).get("S", "")
-                updated_at = item.get("updated_at", {}).get("S")
+                updated_at_str = item.get("updated_at", {}).get("S")
+                updated_at_ts: Optional[int] = None
+                if updated_at_str:
+                    try:
+                        updated_at_ts = int(datetime.fromisoformat(updated_at_str).timestamp())
+                    except (ValueError, TypeError):
+                        updated_at_ts = None
                 mappings.append({
                     "openai_model_id": openai_id,
                     "anthropic_model_id": openai_id,  # Alias for admin portal
                     "bedrock_model_id": bedrock_id,
-                    "updated_at": updated_at,
+                    "updated_at": updated_at_ts,
                 })
             return mappings
         except Exception:
