@@ -52,6 +52,7 @@ export class ECSStack extends cdk.Stack {
       internetFacing: true,
       securityGroup: albSecurityGroup,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      idleTimeout: cdk.Duration.seconds(300),
     });
 
     // Target Group
