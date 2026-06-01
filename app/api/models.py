@@ -1,5 +1,5 @@
 """Models API endpoint."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.middleware.auth import get_api_key_info
 from app.schemas.openai import Model, ModelList
@@ -8,8 +8,9 @@ from app.services.bedrock_service import BedrockService
 router = APIRouter(tags=["Models"])
 
 
-def get_bedrock_service() -> BedrockService:
-    return BedrockService()
+def get_bedrock_service(request: Request) -> BedrockService:
+    dynamodb_client = getattr(request.app.state, "dynamodb_client", None)
+    return BedrockService(dynamodb_client)
 
 
 @router.get("/v1/models", response_model=ModelList)

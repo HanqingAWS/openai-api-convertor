@@ -164,9 +164,22 @@ class BedrockService:
             yield item
 
     def list_models(self) -> list[Dict[str, Any]]:
-        """List available models."""
+        """List available models (default + custom mappings)."""
+        model_ids = set(settings.default_model_mapping.keys())
+
+        # Include custom mappings from DynamoDB
+        if self.openai_to_bedrock.dynamodb_client:
+            try:
+                from app.db.dynamodb import ModelMappingManager
+                manager = ModelMappingManager(self.openai_to_bedrock.dynamodb_client)
+                for m in manager.list_mappings():
+                    model_ids.add(m.get("openai_model_id", ""))
+                model_ids.discard("")
+            except Exception:
+                pass
+
         models = []
-        for model_id in settings.default_model_mapping.keys():
+        for model_id in sorted(model_ids):
             models.append({
                 "id": model_id,
                 "object": "model",
