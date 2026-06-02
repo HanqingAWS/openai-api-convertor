@@ -144,7 +144,7 @@ class ChoiceMessage(BaseModel):
     role: Literal["assistant"] = "assistant"
     content: Optional[str] = None
     tool_calls: Optional[List[ToolCall]] = None
-    # Extended thinking (custom extension)
+    reasoning_content: Optional[str] = None
     thinking: Optional[str] = None
 
 
@@ -168,6 +168,7 @@ class DeltaMessage(BaseModel):
     role: Optional[Literal["assistant"]] = None
     content: Optional[str] = None
     tool_calls: Optional[List[ToolCall]] = None
+    reasoning_content: Optional[str] = None
 
 
 class StreamChoice(BaseModel):

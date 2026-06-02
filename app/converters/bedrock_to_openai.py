@@ -77,6 +77,7 @@ class BedrockToOpenAIConverter:
             role="assistant",
             content=text_content if text_content else None,
             tool_calls=tool_calls if tool_calls else None,
+            reasoning_content=thinking_content,
             thinking=thinking_content,
         )
 
@@ -154,7 +155,7 @@ class BedrockToOpenAIConverter:
                     )
                 ],
             )
-            events.append(f"data: {chunk.model_dump_json()}\n\n")
+            events.append(f"data: {chunk.model_dump_json(exclude_none=True)}\n\n")
 
         # Content block start (for tool use) — must be before delta to populate state
         elif "contentBlockStart" in event:
@@ -190,7 +191,7 @@ class BedrockToOpenAIConverter:
                         )
                     ],
                 )
-                events.append(f"data: {chunk.model_dump_json()}\n\n")
+                events.append(f"data: {chunk.model_dump_json(exclude_none=True)}\n\n")
 
         # Content block delta
         elif "contentBlockDelta" in event:
@@ -208,7 +209,24 @@ class BedrockToOpenAIConverter:
                         )
                     ],
                 )
-                events.append(f"data: {chunk.model_dump_json()}\n\n")
+                events.append(f"data: {chunk.model_dump_json(exclude_none=True)}\n\n")
+
+            elif "reasoningContent" in delta:
+                rc = delta["reasoningContent"]
+                reasoning_text = rc.get("text", "")
+                if reasoning_text:
+                    chunk = ChatCompletionChunk(
+                        id=request_id,
+                        model=model,
+                        choices=[
+                            StreamChoice(
+                                index=0,
+                                delta=DeltaMessage(reasoning_content=reasoning_text),
+                                finish_reason=None,
+                            )
+                        ],
+                    )
+                    events.append(f"data: {chunk.model_dump_json(exclude_none=True)}\n\n")
 
             elif "toolUse" in delta:
                 tu = delta["toolUse"]
@@ -240,7 +258,7 @@ class BedrockToOpenAIConverter:
                                 )
                             ],
                         )
-                        events.append(f"data: {chunk.model_dump_json()}\n\n")
+                        events.append(f"data: {chunk.model_dump_json(exclude_none=True)}\n\n")
 
         # Message stop
         elif "messageStop" in event:
@@ -258,7 +276,7 @@ class BedrockToOpenAIConverter:
                     )
                 ],
             )
-            events.append(f"data: {chunk.model_dump_json()}\n\n")
+            events.append(f"data: {chunk.model_dump_json(exclude_none=True)}\n\n")
             # Note: [DONE] is appended by the caller after optional usage chunk
 
         # Metadata event (contains usage)
@@ -350,4 +368,4 @@ class BedrockToOpenAIConverter:
             choices=[],
             usage=usage,
         )
-        return f"data: {chunk.model_dump_json()}\n\n"
+        return f"data: {chunk.model_dump_json(exclude_none=True)}\n\n"
