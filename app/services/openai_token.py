@@ -1,21 +1,23 @@
 """OpenAI token manager for Bedrock Mantle endpoint."""
+import threading
 import time
 from typing import Optional
 
 from app.core.config import settings
 
 DEFAULT_OPENAI_BASE_URL = "https://bedrock-mantle.us-east-2.api.aws/openai/v1"
-# Token valid ~12h but IAM role credentials rotate ~6h on ECS.
-# Cache for 5.5h to stay well within both limits.
-TOKEN_CACHE_SECONDS = 5.5 * 3600  # 5.5 hours
+# Token valid ~12h, IAM role credentials rotate ~6h on ECS.
+# Proactively refresh at 5h so requests never hit an expired token.
+TOKEN_CACHE_SECONDS = 5 * 3600  # 5 hours
+TOKEN_REFRESH_MARGIN = 10 * 60  # refresh 10 min before expiry
 
 
 class OpenAITokenManager:
     """Manages authentication for Bedrock Mantle (OpenAI-compatible endpoint).
 
     Supports two modes:
-    - dynamic: generates bearer tokens from IAM role credentials, cached ~5.5h,
-      with automatic refresh on 401 (call invalidate_token() then retry)
+    - dynamic: generates bearer tokens from IAM role credentials. Proactively
+      refreshes in background before expiry; falls back to 401-retry if that fails.
     - static: uses a user-provided bearer token stored in DynamoDB
     """
 
@@ -23,6 +25,8 @@ class OpenAITokenManager:
         self._dynamodb_client = dynamodb_client
         self._cached_token: Optional[str] = None
         self._token_expiry: float = 0
+        self._refresh_lock = threading.Lock()
+        self._refresh_scheduled = False
 
     def _get_config_manager(self):
         if not self._dynamodb_client:
@@ -69,15 +73,35 @@ class OpenAITokenManager:
     def _get_dynamic_token(self) -> str:
         now = time.time()
         if self._cached_token and now < self._token_expiry:
+            # Proactively refresh in background if approaching expiry
+            if now > self._token_expiry - TOKEN_REFRESH_MARGIN:
+                self._schedule_background_refresh()
             return self._cached_token
 
-        try:
-            from aws_bedrock_token_generator import BedrockTokenGenerator
-            generator = BedrockTokenGenerator(region="us-east-2")
-            token = generator.generate_token()
-            self._cached_token = token
-            self._token_expiry = now + TOKEN_CACHE_SECONDS
-            return token
-        except Exception as e:
-            print(f"[OpenAITokenManager] Error generating dynamic token: {e}")
-            return self._cached_token or ""
+        # Token expired or not yet generated — blocking refresh
+        return self._refresh_token()
+
+    def _refresh_token(self) -> str:
+        with self._refresh_lock:
+            # Double-check after acquiring lock
+            now = time.time()
+            if self._cached_token and now < self._token_expiry:
+                return self._cached_token
+            try:
+                from aws_bedrock_token_generator import BedrockTokenGenerator
+                generator = BedrockTokenGenerator(region="us-east-2")
+                token = generator.generate_token()
+                self._cached_token = token
+                self._token_expiry = now + TOKEN_CACHE_SECONDS
+                self._refresh_scheduled = False
+                return token
+            except Exception as e:
+                print(f"[OpenAITokenManager] Error generating dynamic token: {e}")
+                return self._cached_token or ""
+
+    def _schedule_background_refresh(self) -> None:
+        if self._refresh_scheduled:
+            return
+        self._refresh_scheduled = True
+        thread = threading.Thread(target=self._refresh_token, daemon=True)
+        thread.start()
