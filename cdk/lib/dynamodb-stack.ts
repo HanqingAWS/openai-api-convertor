@@ -13,6 +13,7 @@ export class DynamoDBStack extends cdk.Stack {
   public readonly modelMappingTable: dynamodb.Table;
   public readonly pricingTable: dynamodb.Table;
   public readonly usageStatsTable: dynamodb.Table;
+  public readonly configTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props: DynamoDBStackProps) {
     super(scope, id, props);
@@ -84,6 +85,16 @@ export class DynamoDBStack extends cdk.Stack {
         : cdk.RemovalPolicy.DESTROY,
     });
 
+    // Config Table (key-value store for runtime settings)
+    this.configTable = new dynamodb.Table(this, 'ConfigTable', {
+      tableName: `openai-proxy-config-${config.environmentName}`,
+      partitionKey: { name: 'config_key', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: config.environmentName === 'prod'
+        ? cdk.RemovalPolicy.RETAIN
+        : cdk.RemovalPolicy.DESTROY,
+    });
+
     // Tags
     Object.entries(config.tags).forEach(([key, value]) => {
       cdk.Tags.of(this).add(key, value);
@@ -113,6 +124,11 @@ export class DynamoDBStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'UsageStatsTableName', {
       value: this.usageStatsTable.tableName,
       description: 'Usage Stats Table Name',
+    });
+
+    new cdk.CfnOutput(this, 'ConfigTableName', {
+      value: this.configTable.tableName,
+      description: 'Config Table Name',
     });
   }
 }

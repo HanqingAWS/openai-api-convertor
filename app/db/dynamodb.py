@@ -838,3 +838,56 @@ class UsageStatsManager:
             else:
                 result[key] = value
         return result
+
+
+class ConfigManager:
+    """Manage runtime configuration in DynamoDB (key-value store)."""
+
+    def __init__(self, dynamodb_client: DynamoDBClient):
+        self.client = dynamodb_client.client
+        self.table_name = settings.dynamodb_config_table
+
+    def get_config(self, key: str) -> Optional[str]:
+        try:
+            response = self.client.get_item(
+                TableName=self.table_name,
+                Key={"config_key": {"S": key}},
+            )
+            item = response.get("Item")
+            if item:
+                return item.get("config_value", {}).get("S")
+        except Exception:
+            pass
+        return None
+
+    def set_config(self, key: str, value: str) -> None:
+        self.client.put_item(
+            TableName=self.table_name,
+            Item={
+                "config_key": {"S": key},
+                "config_value": {"S": value},
+                "updated_at": {"S": datetime.now(timezone.utc).isoformat()},
+            },
+        )
+
+    def get_all_configs(self) -> Dict[str, str]:
+        try:
+            response = self.client.scan(TableName=self.table_name)
+            configs = {}
+            for item in response.get("Items", []):
+                key = item.get("config_key", {}).get("S", "")
+                value = item.get("config_value", {}).get("S", "")
+                if key:
+                    configs[key] = value
+            return configs
+        except Exception:
+            return {}
+
+    def delete_config(self, key: str) -> None:
+        try:
+            self.client.delete_item(
+                TableName=self.table_name,
+                Key={"config_key": {"S": key}},
+            )
+        except Exception:
+            pass

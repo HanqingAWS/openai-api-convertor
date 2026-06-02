@@ -12,6 +12,7 @@ services:
       - DYNAMODB_MODEL_MAPPING_TABLE=openai-proxy-model-mapping
       - DYNAMODB_PRICING_TABLE=openai-proxy-pricing
       - DYNAMODB_USAGE_STATS_TABLE=openai-proxy-usage-stats
+      - DYNAMODB_CONFIG_TABLE=openai-proxy-config
       - REQUIRE_API_KEY=${REQUIRE_API_KEY:-false}
       - MASTER_API_KEY=${MASTER_API_KEY:-test-key}
       - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-false}
@@ -84,6 +85,7 @@ services:
       - DYNAMODB_PRICING_TABLE=openai-proxy-pricing
       - DYNAMODB_USAGE_STATS_TABLE=openai-proxy-usage-stats
       - DYNAMODB_MODEL_MAPPING_TABLE=openai-proxy-model-mapping
+      - DYNAMODB_CONFIG_TABLE=openai-proxy-config
       # Cognito settings (optional - set these for production)
       - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
       - COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID:-}

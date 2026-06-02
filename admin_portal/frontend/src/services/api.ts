@@ -310,3 +310,30 @@ export const modelMappingApi = {
     });
   },
 };
+
+// OpenAI Configuration API
+export interface OpenAIConfig {
+  base_url: string;
+  auth_mode: string;
+  bearer_token?: string;
+  updated_at?: string;
+}
+
+export interface OpenAIConfigUpdate {
+  base_url?: string;
+  auth_mode?: string;
+  bearer_token?: string;
+}
+
+export const openaiConfigApi = {
+  get: async (): Promise<OpenAIConfig> => {
+    return apiFetch('/openai-config');
+  },
+
+  update: async (data: OpenAIConfigUpdate): Promise<OpenAIConfig> => {
+    return apiFetch('/openai-config', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+};
