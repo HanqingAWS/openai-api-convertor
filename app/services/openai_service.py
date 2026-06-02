@@ -105,11 +105,18 @@ class OpenAIService:
             tools = []
             for tool in request.tools:
                 if tool.type == "function":
+                    params = {}
+                    if tool.function.parameters:
+                        params = {
+                            "type": tool.function.parameters.type,
+                            "properties": tool.function.parameters.properties or {},
+                            "required": tool.function.parameters.required or [],
+                        }
                     tools.append({
                         "type": "function",
                         "name": tool.function.name,
                         "description": tool.function.description or "",
-                        "parameters": tool.function.parameters.model_dump() if tool.function.parameters else {},
+                        "parameters": params,
                     })
             if tools:
                 kwargs["tools"] = tools
