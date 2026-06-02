@@ -398,7 +398,11 @@ class OpenAIService:
         loop.run_in_executor(None, _stream_in_thread)
 
         while True:
-            item = await queue.get()
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                yield ": ping\n\n"
+                continue
             if item is _SENTINEL:
                 break
             yield item
