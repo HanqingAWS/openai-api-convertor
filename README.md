@@ -310,9 +310,18 @@ response = client.chat.completions.create(
 )
 ```
 
-### Extended Thinking
+### Extended Thinking / Reasoning
 
 ```python
+# 方式一：reasoning_effort（OpenAI 标准，Claude 和 OpenAI 模型都支持）
+response = client.chat.completions.create(
+    model="claude-sonnet-4-6",  # 或 "openai-gpt-5-5"
+    messages=[{"role": "user", "content": "解决这个复杂问题..."}],
+    reasoning_effort="high"  # low / medium / high
+)
+# 响应中 reasoning_content 字段包含推理过程（流式也支持）
+
+# 方式二：thinking（Claude-specific，精确控制 budget_tokens）
 response = client.chat.completions.create(
     model="claude-sonnet-4-5",
     messages=[{"role": "user", "content": "解决这个复杂问题..."}],
@@ -324,6 +333,14 @@ response = client.chat.completions.create(
     }
 )
 ```
+
+| 参数 | Claude 映射 | OpenAI 映射 |
+|------|------------|------------|
+| `reasoning_effort="low"` | budget_tokens=1024 | `reasoning.effort="low"` |
+| `reasoning_effort="medium"` | budget_tokens=10000 | `reasoning.effort="medium"` |
+| `reasoning_effort="high"` | budget_tokens=32000 | `reasoning.effort="high"` |
+
+响应中推理内容通过 `reasoning_content` 字段返回（兼容 OpenCode 等客户端），同时保留 `thinking` 字段向后兼容。
 
 ### 响应格式
 
