@@ -126,6 +126,17 @@ class OpenAIService:
 
         return kwargs
 
+    def _call_with_retry(self, kwargs: Dict[str, Any]):
+        """Call Responses API with one retry on 401 (token expired)."""
+        from openai import AuthenticationError
+        client = self._get_client()
+        try:
+            return client.responses.create(**kwargs)
+        except AuthenticationError:
+            self.token_manager.invalidate_token()
+            client = self._get_client()
+            return client.responses.create(**kwargs)
+
     async def chat_completion(
         self,
         request: ChatCompletionRequest,
@@ -137,9 +148,8 @@ class OpenAIService:
         kwargs = self._build_responses_kwargs(request, model_id)
 
         loop = asyncio.get_running_loop()
-        client = self._get_client()
         response = await loop.run_in_executor(
-            None, lambda: client.responses.create(**kwargs)
+            None, lambda: self._call_with_retry(kwargs)
         )
 
         # Convert response
@@ -222,8 +232,14 @@ class OpenAIService:
 
         def _stream_in_thread():
             try:
-                client = self._get_client()
-                stream = client.responses.create(**kwargs)
+                from openai import AuthenticationError
+                try:
+                    client = self._get_client()
+                    stream = client.responses.create(**kwargs)
+                except AuthenticationError:
+                    self.token_manager.invalidate_token()
+                    client = self._get_client()
+                    stream = client.responses.create(**kwargs)
 
                 # Emit role chunk
                 role_chunk = ChatCompletionChunk(

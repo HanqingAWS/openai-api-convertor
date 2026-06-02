@@ -5,14 +5,17 @@ from typing import Optional
 from app.core.config import settings
 
 DEFAULT_OPENAI_BASE_URL = "https://bedrock-mantle.us-east-2.api.aws/openai/v1"
-TOKEN_CACHE_SECONDS = 840  # 14 minutes (tokens valid up to 15min)
+# Token valid ~12h but IAM role credentials rotate ~6h on ECS.
+# Cache for 5.5h to stay well within both limits.
+TOKEN_CACHE_SECONDS = 5.5 * 3600  # 5.5 hours
 
 
 class OpenAITokenManager:
     """Manages authentication for Bedrock Mantle (OpenAI-compatible endpoint).
 
     Supports two modes:
-    - dynamic: generates short-lived bearer tokens from IAM role credentials
+    - dynamic: generates bearer tokens from IAM role credentials, cached ~5.5h,
+      with automatic refresh on 401 (call invalidate_token() then retry)
     - static: uses a user-provided bearer token stored in DynamoDB
     """
 
@@ -48,6 +51,12 @@ class OpenAITokenManager:
         if mode == "static":
             return self._get_static_token()
         return self._get_dynamic_token()
+
+    def invalidate_token(self) -> None:
+        """Force token refresh on next get_api_key() call.
+        Call this when a 401 is received from Bedrock Mantle."""
+        self._cached_token = None
+        self._token_expiry = 0
 
     def _get_static_token(self) -> str:
         manager = self._get_config_manager()
