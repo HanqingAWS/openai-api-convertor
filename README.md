@@ -1,33 +1,38 @@
 # OpenAI API Convertor
 
-OpenAI 兼容的 API 代理，将请求转发到 AWS Bedrock Claude 模型。使用 OpenAI SDK 即可调用 Bedrock 上的 Claude，无需修改业务代码。
+OpenAI 兼容的 API 代理，将请求转发到 AWS Bedrock。支持 Claude 模型（via Converse API）和 OpenAI 模型（via Bedrock Mantle Responses API）。使用标准 OpenAI SDK 即可调用，无需修改业务代码。
 
 ## 功能特性
 
 - OpenAI v1 兼容 API（`/v1/chat/completions`、`/v1/models`）
-- 支持 Claude 模型：Opus 4.5/4.6、Sonnet 4.5/4.6、Haiku 4.5、Claude 3.5 Haiku
-- 流式响应（Streaming SSE）
+- **Claude 模型**：Opus 4.5/4.6、Sonnet 4.5/4.6、Haiku 4.5（via Bedrock Converse API）
+- **OpenAI 模型**：GPT-5-5、GPT-5-4（via Bedrock Mantle Responses API）
+- 流式响应（Streaming SSE）+ SSE ping keep-alive（防止 idle timeout）
 - 图片输入（Vision）
 - 工具调用（Function Calling）
-- 扩展思考（Extended Thinking）
+- 扩展思考 / 推理内容（Extended Thinking + `reasoning_content`）
 - Prompt Caching（自动缓存 system prompt / 历史对话 / tools，支持 5m / 1h TTL）
 - 结构化输出（Structured Output：`json_object` / `json_schema`）
 - 流式用量统计（`stream_options.include_usage`）
 - 推理力度控制（`reasoning_effort`：low / medium / high）
 - API Key 认证 & 速率限制
 - DynamoDB 使用量追踪 & 成本计算
-- Admin Portal 管理后台（API Key 管理、模型定价、用量统计）
+- Admin Portal 管理后台（API Key、模型定价、用量统计、OpenAI 配置）
+- 动态 Token 管理（IAM Role 自动生成 + 后台刷新 + 401 重试）
 
 ## 模型映射
 
-| 模型 ID | Bedrock 模型 ID |
-|---------|----------------|
-| claude-opus-4-5 | global.anthropic.claude-opus-4-5-20251101-v1:0 |
-| claude-opus-4-6 | global.anthropic.claude-opus-4-6-v1 |
-| claude-sonnet-4-5 | global.anthropic.claude-sonnet-4-5-20250929-v1:0 |
-| claude-sonnet-4-6 | global.anthropic.claude-sonnet-4-6 |
-| claude-haiku-4-5 | global.anthropic.claude-haiku-4-5-20251001-v1:0 |
-| claude-3-5-haiku | us.anthropic.claude-3-5-haiku-20241022-v1:0 |
+| 模型 ID | Bedrock 模型 ID | 路由 |
+|---------|----------------|------|
+| claude-opus-4-5 | global.anthropic.claude-opus-4-5-20251101-v1:0 | Converse API |
+| claude-opus-4-6 | global.anthropic.claude-opus-4-6-v1 | Converse API |
+| claude-sonnet-4-5 | global.anthropic.claude-sonnet-4-5-20250929-v1:0 | Converse API |
+| claude-sonnet-4-6 | global.anthropic.claude-sonnet-4-6 | Converse API |
+| claude-haiku-4-5 | global.anthropic.claude-haiku-4-5-20251001-v1:0 | Converse API |
+| openai-gpt-5-5 | openai.gpt-5.5 | Bedrock Mantle |
+| openai-gpt-5-4 | openai.gpt-5.4 | Bedrock Mantle |
+
+> **路由规则**：Bedrock 模型 ID 以 `openai.` 开头的走 Bedrock Mantle Responses API，其他走 Bedrock Converse API。
 
 ### 添加新模型
 
@@ -59,7 +64,8 @@ DynamoDB Tables:
   ├── openai-proxy-usage-{env}          # 请求级用量记录
   ├── openai-proxy-model-mapping-{env}  # 自定义模型映射
   ├── openai-proxy-pricing-{env}        # 模型定价配置
-  └── openai-proxy-usage-stats-{env}    # 聚合用量统计
+  ├── openai-proxy-usage-stats-{env}    # 聚合用量统计
+  └── openai-proxy-config-{env}         # 运行时配置（OpenAI endpoint/token）
 
 CDK Stacks:
   ├── OpenAIProxy-Network-{env}     # VPC, Subnets, NAT Gateway, ALB, Security Groups
@@ -157,8 +163,8 @@ CDK 自动为 ECS Task Role 授予以下权限：
 | 权限 | 用途 |
 |------|------|
 | `bedrock:InvokeModel` / `bedrock:InvokeModelWithResponseStream` | 调用 Bedrock 模型 |
-| `bedrock:Converse` / `bedrock:ConverseStream` | Converse API |
-| DynamoDB CRUD（5 张表） | API Key 验证、用量记录、模型映射、定价查询 |
+| `bedrock:Converse` / `bedrock:ConverseStream` | Converse API（Claude） |
+| DynamoDB CRUD（6 张表） | API Key 验证、用量记录、模型映射、定价查询、运行时配置 |
 | Secrets Manager Read | 读取 Master API Key |
 
 ### 销毁
@@ -433,7 +439,7 @@ response = client.chat.completions.create(
 - 全局开关 `ENABLE_PROMPT_CACHING=false` 将完全禁用缓存，忽略以上所有设置
 - 缓存点自动注入位置：system prompt 末尾、tools 定义末尾、对话历史中的 assistant 消息末尾、或累计 token 首次超过阈值的消息末尾
 
-> Note: `claude-3-5-haiku` 不支持 Prompt Caching，对不支持的模型自动跳过缓存。
+> Note: Prompt Caching 仅适用于 Claude 模型，OpenAI 模型（GPT-5-5/5-4）不使用此机制。
 
 #### 最小缓存 Token 阈值
 
@@ -459,6 +465,31 @@ Bedrock 对不同模型有不同的最小缓存 token 要求，低于阈值的�
 
 ---
 
+### OpenAI 模型配置（Bedrock Mantle）
+
+OpenAI 模型（GPT-5-5、GPT-5-4）通过 Bedrock Mantle 的 Responses API 路由。在 Admin Portal → **OpenAI Config** 页面配置：
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| Base URL | Bedrock Mantle endpoint | `https://bedrock-mantle.us-east-2.api.aws/openai/v1` |
+| Auth Mode | `dynamic`（IAM Role 自动生成）或 `static`（手动 Bearer Token） | `dynamic` |
+| Bearer Token | 仅 static 模式需要 | - |
+
+**Dynamic 模式**（推荐）：使用 ECS Task Role 的 IAM 凭证自动生成短期 Bearer Token。Token 缓存 5 小时，到期前 10 分钟后台自动刷新，如遇 401 立即重试。无需手动维护。
+
+**Static 模式**：手动提供 Bearer Token，适用于测试或无 IAM Role 的环境。
+
+```python
+# 使用 OpenAI 模型
+response = client.chat.completions.create(
+    model="openai-gpt-5-5",
+    messages=[{"role": "user", "content": "Hello!"}],
+    max_tokens=200
+)
+```
+
+---
+
 ## 环境变量
 
 | 变量 | 说明 | 默认值 |
@@ -470,6 +501,7 @@ Bedrock 对不同模型有不同的最小缓存 token 要求，低于阈值的�
 | `DYNAMODB_MODEL_MAPPING_TABLE` | Model Mapping 表名 | openai-proxy-model-mapping |
 | `DYNAMODB_PRICING_TABLE` | Pricing 表名 | openai-proxy-pricing |
 | `DYNAMODB_USAGE_STATS_TABLE` | Usage Stats 表名 | openai-proxy-usage-stats |
+| `DYNAMODB_CONFIG_TABLE` | Config 表名 | openai-proxy-config |
 | `REQUIRE_API_KEY` | 是否要求 API Key | false |
 | `MASTER_API_KEY` | 管理员 API Key | - |
 | `RATE_LIMIT_ENABLED` | 是否启用限流 | false |
@@ -522,10 +554,10 @@ openai-api-convertor/
 │   ├── db/                       # DynamoDB 操作
 │   ├── middleware/                # 认证、限流中间件
 │   ├── schemas/                  # Pydantic 模型
-│   └── services/                 # Bedrock 调用服务
+│   └── services/                 # Bedrock + OpenAI Mantle 调用服务
 ├── admin_portal/                 # 管理后台
 │   ├── backend/                  # FastAPI 后端
-│   │   ├── api/                  # API 路由（keys, pricing, dashboard, mapping）
+│   │   ├── api/                  # API 路由（keys, pricing, dashboard, mapping, openai-config）
 │   │   ├── middleware/           # Cognito 认证
 │   │   ├── schemas/              # 数据模型
 │   │   └── services/             # 用量聚合服务（每 5 分钟聚合一次）
@@ -574,11 +606,14 @@ openai-api-convertor/
 | 用量追踪 & 成本计算 | ✅ | ✅ | ✅ |
 | 模型定价管理 | ❌ | ❌ | ✅ |
 | Admin Portal 管理后台 | ❌ | ✅ | ✅ |
-| 多 Provider 支持 | ✅ | ✅ | ❌** |
+| 多 Provider 支持 | ✅ | ✅ | ✅** |
+| SSE Ping Keep-Alive | ❌ | ❌ | ✅ |
+| OpenAI 模型 via Bedrock Mantle | ❌ | ❌ | ✅ |
+| 动态 Token 管理（IAM Role） | ❌ | ❌ | ✅ |
 
 > \* OpenAI 原生模型不支持 Claude 风格的扩展思考，此处为 Claude-specific 功能。
 >
-> \** 本项目专注于 AWS Bedrock Claude 模型，提供最深度的 Claude 功能集成。
+> \** 支持 Claude（Bedrock Converse API）+ OpenAI（Bedrock Mantle Responses API）双通道路由。
 
 ---
 
