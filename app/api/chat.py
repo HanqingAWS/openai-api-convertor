@@ -13,6 +13,7 @@ from app.middleware.auth import get_api_key_info
 from app.middleware.rate_limit import check_rate_limit
 from app.schemas.openai import ChatCompletionRequest, ChatCompletionResponse
 from app.services.bedrock_service import BedrockService
+from app.services.openai_service import OpenAIService
 
 router = APIRouter(tags=["Chat"])
 
@@ -20,6 +21,15 @@ router = APIRouter(tags=["Chat"])
 def get_bedrock_service(request: Request) -> BedrockService:
     dynamodb_client = getattr(request.app.state, "dynamodb_client", None)
     return BedrockService(dynamodb_client)
+
+
+def get_openai_service(request: Request) -> OpenAIService:
+    dynamodb_client = getattr(request.app.state, "dynamodb_client", None)
+    return OpenAIService(dynamodb_client)
+
+
+def is_openai_model(resolved_model_id: str) -> bool:
+    return resolved_model_id.startswith("openai.")
 
 
 def get_usage_tracker(request: Request) -> Optional[UsageTracker]:
@@ -69,7 +79,18 @@ async def create_chat_completion(
     # Store api_key_info in request state for rate limiting
     request.state.api_key_info = api_key_info
 
-    # Resolve cache TTL
+    # Resolve model ID to detect OpenAI vs Claude
+    resolved_model_id = bedrock_service.resolve_model_id(request_data.model)
+
+    # Route to OpenAI service if model is an OpenAI model
+    if is_openai_model(resolved_model_id):
+        openai_service = get_openai_service(request)
+        return await _handle_openai_request(
+            request_data, request_id, resolved_model_id,
+            openai_service, usage_tracker, api_key_info, start_time,
+        )
+
+    # Resolve cache TTL (Claude models only)
     cache_ttl = resolve_cache_ttl(request_data, api_key_info)
 
     try:
@@ -200,4 +221,120 @@ async def _stream_response(
                 cached_tokens=cached_tokens,
                 cache_write_tokens=cache_write_tokens,
                 cache_write_ttl=cache_write_ttl or cache_ttl,
+            )
+
+
+async def _handle_openai_request(
+    request_data: ChatCompletionRequest,
+    request_id: str,
+    resolved_model_id: str,
+    openai_service: OpenAIService,
+    usage_tracker: Optional[UsageTracker],
+    api_key_info: dict,
+    start_time: float,
+):
+    """Handle requests for OpenAI models routed to Bedrock Mantle."""
+    try:
+        if request_data.stream:
+            return StreamingResponse(
+                _stream_openai_response(
+                    request_data, request_id, resolved_model_id,
+                    openai_service, usage_tracker, api_key_info, start_time,
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Request-ID": request_id,
+                },
+            )
+        else:
+            response, cache_usage = await openai_service.chat_completion(
+                request_data, resolved_model_id, request_id
+            )
+
+            if usage_tracker:
+                latency_ms = int((time.time() - start_time) * 1000)
+                usage_tracker.record_usage(
+                    api_key=api_key_info.get("api_key", "anonymous"),
+                    request_id=request_id,
+                    model=request_data.model,
+                    prompt_tokens=response.usage.prompt_tokens,
+                    completion_tokens=response.usage.completion_tokens,
+                    success=True,
+                    latency_ms=latency_ms,
+                )
+
+            return JSONResponse(content=response.model_dump(exclude_none=True))
+
+    except Exception as e:
+        if usage_tracker:
+            usage_tracker.record_usage(
+                api_key=api_key_info.get("api_key", "anonymous"),
+                request_id=request_id,
+                model=request_data.model,
+                prompt_tokens=0,
+                completion_tokens=0,
+                success=False,
+                error_message=str(e),
+            )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": {
+                    "message": f"Internal server error: {str(e)}",
+                    "type": "server_error",
+                    "code": "internal_error",
+                }
+            },
+        )
+
+
+async def _stream_openai_response(
+    request_data: ChatCompletionRequest,
+    request_id: str,
+    resolved_model_id: str,
+    openai_service: OpenAIService,
+    usage_tracker: Optional[UsageTracker],
+    api_key_info: dict,
+    start_time: float,
+):
+    """Stream OpenAI model response."""
+    prompt_tokens = 0
+    completion_tokens = 0
+    success = True
+    error_message = None
+
+    try:
+        async for chunk in openai_service.chat_completion_stream(
+            request_data, resolved_model_id, request_id
+        ):
+            if chunk.startswith("__usage__:"):
+                try:
+                    usage_data = json.loads(chunk[len("__usage__:"):])
+                    prompt_tokens = usage_data.get("prompt_tokens", 0)
+                    completion_tokens = usage_data.get("completion_tokens", 0)
+                except Exception:
+                    pass
+                continue
+            yield chunk
+
+    except Exception as e:
+        success = False
+        error_message = str(e)
+        yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'server_error'}})}\n\n"
+
+    finally:
+        if usage_tracker:
+            latency_ms = int((time.time() - start_time) * 1000)
+            usage_tracker.record_usage(
+                api_key=api_key_info.get("api_key", "anonymous"),
+                request_id=request_id,
+                model=request_data.model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                success=success,
+                error_message=error_message,
+                latency_ms=latency_ms,
             )

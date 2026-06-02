@@ -163,6 +163,10 @@ class BedrockService:
                 break
             yield item
 
+    def resolve_model_id(self, model: str) -> str:
+        """Resolve OpenAI model name to Bedrock model ID."""
+        return self.openai_to_bedrock._convert_model_id(model)
+
     def list_models(self) -> list[Dict[str, Any]]:
         """List available models (default + custom mappings)."""
         model_ids = set(settings.default_model_mapping.keys())
