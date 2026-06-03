@@ -1,12 +1,15 @@
 """OpenAI model service via Bedrock Mantle Responses API."""
 import asyncio
+import hashlib
 import json
+import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from uuid import uuid4
 
 from openai import OpenAI
 
+from app.core.config import settings
 from app.schemas.openai import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -17,6 +20,7 @@ from app.schemas.openai import (
     DeltaMessage,
     ToolCall,
     FunctionCall,
+    PromptTokensDetails,
     Usage,
 )
 from app.services.openai_token import OpenAITokenManager
@@ -84,7 +88,48 @@ class OpenAIService:
 
         return params
 
-    def _build_responses_kwargs(self, request: ChatCompletionRequest, model_id: str) -> Dict[str, Any]:
+    def _caching_enabled(self, request: ChatCompletionRequest) -> bool:
+        """Auto prompt caching is on unless globally disabled or the request opts out."""
+        if not settings.enable_prompt_caching:
+            return False
+        if request.caching is False:
+            return False
+        return True
+
+    def _prompt_cache_key(self, api_key: Optional[str], instructions: Optional[str]) -> str:
+        """Routing hint stable per (client, system prompt).
+
+        Bedrock Mantle uses prompt_cache_key to route requests sharing a prefix to the
+        same cache, so repeated turns of the same agent setup reuse the cached
+        instructions. Opaque to the client.
+        """
+        h = hashlib.sha256()
+        h.update((api_key or "anonymous").encode("utf-8"))
+        h.update(b"\x00")
+        h.update((instructions or "").encode("utf-8"))
+        return h.hexdigest()[:32]
+
+    def _prompt_cache_retention(self, model_id: str) -> str:
+        """GPT-5.5+ supports 24h disk retention; earlier models only in-memory."""
+        m = re.search(r"gpt-(\d+)\.(\d+)", model_id)
+        if m and (int(m.group(1)), int(m.group(2))) >= (5, 5):
+            return "24h"
+        return "in_memory"
+
+    @staticmethod
+    def _extract_cached_tokens(usage_data: Any) -> int:
+        """Pull cached prompt tokens from Responses API usage (subset of input_tokens)."""
+        details = getattr(usage_data, "input_tokens_details", None)
+        if details is not None:
+            return getattr(details, "cached_tokens", 0) or 0
+        return 0
+
+    def _build_responses_kwargs(
+        self,
+        request: ChatCompletionRequest,
+        model_id: str,
+        api_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Build full kwargs for client.responses.create()."""
         kwargs = self._convert_to_responses_input(request)
         kwargs["model"] = model_id
@@ -124,6 +169,11 @@ class OpenAIService:
         if request.tool_choice:
             kwargs["tool_choice"] = request.tool_choice
 
+        # Auto prompt caching: transparent cache key + model-appropriate retention.
+        if self._caching_enabled(request):
+            kwargs["prompt_cache_key"] = self._prompt_cache_key(api_key, kwargs.get("instructions"))
+            kwargs["prompt_cache_retention"] = self._prompt_cache_retention(model_id)
+
         return kwargs
 
     def _call_with_retry(self, kwargs: Dict[str, Any]):
@@ -142,10 +192,11 @@ class OpenAIService:
         request: ChatCompletionRequest,
         model_id: str,
         request_id: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> tuple[ChatCompletionResponse, Dict[str, Any]]:
         """Non-streaming completion via Responses API."""
         request_id = request_id or f"chatcmpl-{uuid4().hex[:24]}"
-        kwargs = self._build_responses_kwargs(request, model_id)
+        kwargs = self._build_responses_kwargs(request, model_id, api_key=api_key)
 
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
@@ -197,11 +248,18 @@ class OpenAIService:
         usage_data = response.usage
         prompt_tokens = getattr(usage_data, "input_tokens", 0)
         completion_tokens = getattr(usage_data, "output_tokens", 0)
+        cached_tokens = self._extract_cached_tokens(usage_data)
 
+        # input_tokens already includes cached_tokens (OpenAI semantics), so
+        # prompt_tokens stays as-is and we just expose the cached subset.
         usage = Usage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=prompt_tokens + completion_tokens,
+            prompt_tokens_details=(
+                PromptTokensDetails(cached_tokens=cached_tokens) if cached_tokens else None
+            ),
+            cache_read_input_tokens=cached_tokens,
         )
 
         return (
@@ -212,7 +270,7 @@ class OpenAIService:
                 choices=[Choice(index=0, message=choice_message, finish_reason=finish_reason)],
                 usage=usage,
             ),
-            {"cached_tokens": 0, "cache_write_tokens": 0, "cache_write_ttl": None},
+            {"cached_tokens": cached_tokens, "cache_write_tokens": 0, "cache_write_ttl": None},
         )
 
     async def chat_completion_stream(
@@ -220,10 +278,11 @@ class OpenAIService:
         request: ChatCompletionRequest,
         model_id: str,
         request_id: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Streaming completion via Responses API."""
         request_id = request_id or f"chatcmpl-{uuid4().hex[:24]}"
-        kwargs = self._build_responses_kwargs(request, model_id)
+        kwargs = self._build_responses_kwargs(request, model_id, api_key=api_key)
         kwargs["stream"] = True
 
         _SENTINEL = object()
@@ -360,6 +419,7 @@ class OpenAIService:
                 if request.stream_options and request.stream_options.include_usage and usage_data:
                     prompt_tokens = getattr(usage_data, "input_tokens", 0)
                     completion_tokens = getattr(usage_data, "output_tokens", 0)
+                    cached_tokens = self._extract_cached_tokens(usage_data)
                     usage_chunk = ChatCompletionChunk(
                         id=request_id,
                         model=request.model,
@@ -368,6 +428,10 @@ class OpenAIService:
                             prompt_tokens=prompt_tokens,
                             completion_tokens=completion_tokens,
                             total_tokens=prompt_tokens + completion_tokens,
+                            prompt_tokens_details=(
+                                PromptTokensDetails(cached_tokens=cached_tokens) if cached_tokens else None
+                            ),
+                            cache_read_input_tokens=cached_tokens,
                         ),
                     )
                     loop.call_soon_threadsafe(
@@ -381,9 +445,10 @@ class OpenAIService:
                 if usage_data:
                     prompt_tokens = getattr(usage_data, "input_tokens", 0)
                     completion_tokens = getattr(usage_data, "output_tokens", 0)
+                    cached_tokens = self._extract_cached_tokens(usage_data)
                     loop.call_soon_threadsafe(
                         queue.put_nowait,
-                        f"__usage__:{json.dumps({'prompt_tokens': prompt_tokens, 'completion_tokens': completion_tokens, 'total_tokens': prompt_tokens + completion_tokens, 'cached_tokens': 0, 'cache_write_tokens': 0})}"
+                        f"__usage__:{json.dumps({'prompt_tokens': prompt_tokens, 'completion_tokens': completion_tokens, 'total_tokens': prompt_tokens + completion_tokens, 'cached_tokens': cached_tokens, 'cache_write_tokens': 0})}"
                     )
 
             except Exception as e:

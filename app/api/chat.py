@@ -250,7 +250,8 @@ async def _handle_openai_request(
             )
         else:
             response, cache_usage = await openai_service.chat_completion(
-                request_data, resolved_model_id, request_id
+                request_data, resolved_model_id, request_id,
+                api_key=api_key_info.get("api_key"),
             )
 
             if usage_tracker:
@@ -263,6 +264,7 @@ async def _handle_openai_request(
                     completion_tokens=response.usage.completion_tokens,
                     success=True,
                     latency_ms=latency_ms,
+                    cached_tokens=cache_usage.get("cached_tokens", 0),
                 )
 
             return JSONResponse(content=response.model_dump(exclude_none=True))
@@ -303,18 +305,21 @@ async def _stream_openai_response(
     """Stream OpenAI model response."""
     prompt_tokens = 0
     completion_tokens = 0
+    cached_tokens = 0
     success = True
     error_message = None
 
     try:
         async for chunk in openai_service.chat_completion_stream(
-            request_data, resolved_model_id, request_id
+            request_data, resolved_model_id, request_id,
+            api_key=api_key_info.get("api_key"),
         ):
             if chunk.startswith("__usage__:"):
                 try:
                     usage_data = json.loads(chunk[len("__usage__:"):])
                     prompt_tokens = usage_data.get("prompt_tokens", 0)
                     completion_tokens = usage_data.get("completion_tokens", 0)
+                    cached_tokens = usage_data.get("cached_tokens", 0)
                 except Exception:
                     pass
                 continue
@@ -337,4 +342,5 @@ async def _stream_openai_response(
                 success=success,
                 error_message=error_message,
                 latency_ms=latency_ms,
+                cached_tokens=cached_tokens,
             )
