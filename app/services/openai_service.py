@@ -39,6 +39,52 @@ class OpenAIService:
             api_key=self.token_manager.get_api_key(),
         )
 
+    @staticmethod
+    def _part_field(part: Any, name: str, default: Any = None) -> Any:
+        """Read a field from a content part that may be a pydantic model or a dict."""
+        if isinstance(part, dict):
+            return part.get(name, default)
+        return getattr(part, name, default)
+
+    def _text_from_content(self, content: Any) -> str:
+        """Flatten str-or-list content to plain text (used for system/assistant)."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(
+                self._part_field(p, "text", "") or ""
+                for p in content
+                if self._part_field(p, "type") == "text"
+            )
+        return ""
+
+    def _convert_user_content(self, content: Any) -> Any:
+        """Convert Chat Completions user content to Responses API input content.
+
+        A plain string stays a string; a multimodal array is converted to
+        input_text / input_image parts so text and images survive instead of
+        being silently dropped to "".
+        """
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        parts: List[Dict[str, Any]] = []
+        for part in content:
+            ptype = self._part_field(part, "type")
+            if ptype == "text":
+                parts.append({"type": "input_text", "text": self._part_field(part, "text", "") or ""})
+            elif ptype == "image_url" and settings.enable_vision:
+                img = self._part_field(part, "image_url")
+                url = self._part_field(img, "url", "") or ""
+                if url:
+                    item: Dict[str, Any] = {"type": "input_image", "image_url": url}
+                    detail = self._part_field(img, "detail")
+                    if detail:
+                        item["detail"] = detail
+                    parts.append(item)
+        return parts
+
     def _convert_to_responses_input(self, request: ChatCompletionRequest) -> Dict[str, Any]:
         """Convert Chat Completions messages to Responses API params."""
         instructions = None
@@ -46,15 +92,14 @@ class OpenAIService:
 
         for msg in request.messages:
             if msg.role == "system":
-                text = msg.content if isinstance(msg.content, str) else ""
+                text = self._text_from_content(msg.content)
                 if instructions:
                     instructions += "\n" + text
                 else:
                     instructions = text
 
             elif msg.role == "user":
-                content = msg.content if isinstance(msg.content, str) else ""
-                input_items.append({"role": "user", "content": content})
+                input_items.append({"role": "user", "content": self._convert_user_content(msg.content)})
 
             elif msg.role == "assistant":
                 if msg.tool_calls:
@@ -67,12 +112,12 @@ class OpenAIService:
                         })
                     if msg.content:
                         input_items.insert(len(input_items) - len(msg.tool_calls), {
-                            "role": "assistant", "content": msg.content
+                            "role": "assistant", "content": self._text_from_content(msg.content)
                         })
                 else:
                     input_items.append({
                         "role": "assistant",
-                        "content": msg.content or "",
+                        "content": self._text_from_content(msg.content),
                     })
 
             elif msg.role == "tool":
