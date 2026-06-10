@@ -53,7 +53,6 @@ class OpenAIToBedrockConverter:
             "modelId": self._resolved_model_id,
             "messages": self._convert_messages(request.messages),
             "inferenceConfig": self._build_inference_config(request),
-            "inputDataRetentionPolicy": {"provider_data_share": "ENABLED"},
         }
 
         # Check for explicit cache_control in user content
