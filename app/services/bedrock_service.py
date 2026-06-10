@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ParamValidationError
 
 from app.core.config import settings
 from app.core.exceptions import BedrockAPIError
@@ -59,7 +60,7 @@ class BedrockService:
             bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
             model_id = bedrock_request.pop("modelId")
 
-            response = self.client.converse(modelId=model_id, **bedrock_request)
+            response = self._call_converse(model_id, bedrock_request)
 
             cache_usage = self.bedrock_to_openai.extract_cache_usage(response)
 
@@ -106,7 +107,7 @@ class BedrockService:
             try:
                 bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
                 model_id = bedrock_request.pop("modelId")
-                response = self.client.converse_stream(modelId=model_id, **bedrock_request)
+                response = self._call_converse_stream(model_id, bedrock_request)
 
                 current_index = 0
                 usage_data = None
@@ -166,6 +167,22 @@ class BedrockService:
             if item is _SENTINEL:
                 break
             yield item
+
+    def _call_converse(self, model_id: str, bedrock_request: Dict[str, Any]):
+        """Call converse with inputDataRetentionPolicy fallback for SDK compat."""
+        try:
+            return self.client.converse(modelId=model_id, **bedrock_request)
+        except ParamValidationError:
+            bedrock_request.pop("inputDataRetentionPolicy", None)
+            return self.client.converse(modelId=model_id, **bedrock_request)
+
+    def _call_converse_stream(self, model_id: str, bedrock_request: Dict[str, Any]):
+        """Call converse_stream with inputDataRetentionPolicy fallback for SDK compat."""
+        try:
+            return self.client.converse_stream(modelId=model_id, **bedrock_request)
+        except ParamValidationError:
+            bedrock_request.pop("inputDataRetentionPolicy", None)
+            return self.client.converse_stream(modelId=model_id, **bedrock_request)
 
     def resolve_model_id(self, model: str) -> str:
         """Resolve OpenAI model name to Bedrock model ID."""
