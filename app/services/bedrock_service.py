@@ -17,6 +17,9 @@ from app.schemas.openai import ChatCompletionRequest, ChatCompletionResponse
 class BedrockService:
     """Service for interacting with AWS Bedrock."""
 
+    # Models that require us-east-1
+    _US_EAST_1_MODELS = {"fable"}
+
     def __init__(self, dynamodb_client=None):
         config = Config(
             read_timeout=settings.bedrock_timeout,
@@ -38,8 +41,18 @@ class BedrockService:
             client_kwargs["endpoint_url"] = settings.bedrock_endpoint_url
 
         self.client = boto3.client(**client_kwargs)
+        # us-east-1 client for models only available there (e.g. fable-5)
+        us_east_kwargs = {**client_kwargs, "region_name": "us-east-1"}
+        us_east_kwargs.pop("endpoint_url", None)
+        self._client_us_east_1 = boto3.client(**us_east_kwargs)
         self.openai_to_bedrock = OpenAIToBedrockConverter(dynamodb_client)
         self.bedrock_to_openai = BedrockToOpenAIConverter()
+
+    def _get_client_for_model(self, model_id: str):
+        for keyword in self._US_EAST_1_MODELS:
+            if keyword in model_id:
+                return self._client_us_east_1
+        return self.client
 
     async def chat_completion(
         self,
@@ -58,8 +71,9 @@ class BedrockService:
         try:
             bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
             model_id = bedrock_request.pop("modelId")
+            client = self._get_client_for_model(model_id)
 
-            response = self.client.converse(modelId=model_id, **bedrock_request)
+            response = client.converse(modelId=model_id, **bedrock_request)
 
             cache_usage = self.bedrock_to_openai.extract_cache_usage(response)
 
@@ -106,7 +120,8 @@ class BedrockService:
             try:
                 bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
                 model_id = bedrock_request.pop("modelId")
-                response = self.client.converse_stream(modelId=model_id, **bedrock_request)
+                client = self._get_client_for_model(model_id)
+                response = client.converse_stream(modelId=model_id, **bedrock_request)
 
                 current_index = 0
                 usage_data = None
