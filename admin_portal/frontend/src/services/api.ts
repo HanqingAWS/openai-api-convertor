@@ -21,6 +21,10 @@ import type {
   ModelMappingCreate,
   ModelMappingUpdate,
   ModelMappingListResponse,
+  Provider,
+  ProviderCreate,
+  ProviderUpdate,
+  ProviderListResponse,
 } from '../types';
 
 const API_BASE_URL = '/api';
@@ -314,15 +318,12 @@ export const modelMappingApi = {
 // OpenAI Configuration API
 export interface OpenAIConfig {
   base_url: string;
-  auth_mode: string;
-  bearer_token?: string;
+  auth_mode?: string;
   updated_at?: string;
 }
 
 export interface OpenAIConfigUpdate {
   base_url?: string;
-  auth_mode?: string;
-  bearer_token?: string;
 }
 
 export const openaiConfigApi = {
@@ -335,5 +336,45 @@ export const openaiConfigApi = {
       method: 'PUT',
       body: JSON.stringify(data),
     });
+  },
+};
+
+// Providers API
+export const providersApi = {
+  list: async (): Promise<ProviderListResponse> => {
+    return apiFetch('/providers');
+  },
+
+  get: async (providerId: string): Promise<Provider> => {
+    return apiFetch(`/providers/${encodeURIComponent(providerId)}`);
+  },
+
+  create: async (data: ProviderCreate): Promise<Provider> => {
+    return apiFetch('/providers', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  update: async (providerId: string, data: ProviderUpdate): Promise<Provider> => {
+    return apiFetch(`/providers/${encodeURIComponent(providerId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  delete: async (providerId: string): Promise<void> => {
+    const token = await getAuthToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const response = await fetch(`${API_BASE_URL}/providers/${encodeURIComponent(providerId)}`, {
+      method: 'DELETE',
+      headers,
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
   },
 };

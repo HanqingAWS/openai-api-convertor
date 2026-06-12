@@ -6,24 +6,16 @@ export default function OpenAIConfigPage() {
   const updateMutation = useUpdateOpenAIConfig();
 
   const [baseUrl, setBaseUrl] = useState('');
-  const [authMode, setAuthMode] = useState<'dynamic' | 'static'>('dynamic');
-  const [bearerToken, setBearerToken] = useState('');
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     if (config) {
       setBaseUrl(config.base_url || '');
-      setAuthMode((config.auth_mode as 'dynamic' | 'static') || 'dynamic');
-      setBearerToken(config.bearer_token || '');
     }
   }, [config]);
 
   const handleSave = async () => {
-    await updateMutation.mutateAsync({
-      base_url: baseUrl,
-      auth_mode: authMode,
-      bearer_token: authMode === 'static' ? bearerToken : undefined,
-    });
+    await updateMutation.mutateAsync({ base_url: baseUrl });
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
@@ -51,7 +43,8 @@ export default function OpenAIConfigPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">OpenAI Configuration</h1>
         <p className="text-slate-400 mt-1">
-          Configure Bedrock Mantle endpoint for OpenAI model access
+          Configure Bedrock Mantle endpoint for OpenAI model access.
+          Authentication is managed via Providers.
         </p>
       </div>
 
@@ -72,58 +65,6 @@ export default function OpenAIConfigPage() {
             Bedrock Mantle OpenAI-compatible endpoint
           </p>
         </div>
-
-        {/* Auth Mode */}
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">
-            Authentication Mode
-          </label>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="authMode"
-                value="dynamic"
-                checked={authMode === 'dynamic'}
-                onChange={() => setAuthMode('dynamic')}
-                className="w-4 h-4 text-accent-blue bg-slate-800 border-slate-600 focus:ring-accent-blue"
-              />
-              <span className="text-sm text-slate-300">Dynamic (IAM Role)</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="authMode"
-                value="static"
-                checked={authMode === 'static'}
-                onChange={() => setAuthMode('static')}
-                className="w-4 h-4 text-accent-blue bg-slate-800 border-slate-600 focus:ring-accent-blue"
-              />
-              <span className="text-sm text-slate-300">Static Bearer Token</span>
-            </label>
-          </div>
-          <p className="text-xs text-slate-500 mt-1">
-            {authMode === 'dynamic'
-              ? 'Automatically generates short-lived tokens from ECS Task IAM Role (recommended)'
-              : 'Uses a manually provided bearer token'}
-          </p>
-        </div>
-
-        {/* Bearer Token (only when static) */}
-        {authMode === 'static' && (
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              Bearer Token
-            </label>
-            <textarea
-              value={bearerToken}
-              onChange={(e) => setBearerToken(e.target.value)}
-              placeholder="Enter your bearer token..."
-              rows={3}
-              className="w-full px-4 py-2.5 bg-slate-800 border border-border-dark rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent-blue/50 focus:border-accent-blue font-mono text-sm"
-            />
-          </div>
-        )}
 
         {/* Save Button */}
         <div className="flex items-center gap-3 pt-2">

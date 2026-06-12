@@ -14,6 +14,7 @@ export class DynamoDBStack extends cdk.Stack {
   public readonly pricingTable: dynamodb.Table;
   public readonly usageStatsTable: dynamodb.Table;
   public readonly configTable: dynamodb.Table;
+  public readonly providersTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props: DynamoDBStackProps) {
     super(scope, id, props);
@@ -95,6 +96,16 @@ export class DynamoDBStack extends cdk.Stack {
         : cdk.RemovalPolicy.DESTROY,
     });
 
+    // Providers Table (credential providers for Bedrock access)
+    this.providersTable = new dynamodb.Table(this, 'ProvidersTable', {
+      tableName: `openai-proxy-providers-${config.environmentName}`,
+      partitionKey: { name: 'provider_id', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: config.environmentName === 'prod'
+        ? cdk.RemovalPolicy.RETAIN
+        : cdk.RemovalPolicy.DESTROY,
+    });
+
     // Tags
     Object.entries(config.tags).forEach(([key, value]) => {
       cdk.Tags.of(this).add(key, value);
@@ -129,6 +140,11 @@ export class DynamoDBStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ConfigTableName', {
       value: this.configTable.tableName,
       description: 'Config Table Name',
+    });
+
+    new cdk.CfnOutput(this, 'ProvidersTableName', {
+      value: this.providersTable.tableName,
+      description: 'Providers Table Name',
     });
   }
 }

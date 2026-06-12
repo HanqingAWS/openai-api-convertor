@@ -72,6 +72,7 @@ class APIKeyManager:
                 "created_at": item.get("created_at", {}).get("S"),
                 "service_tier": item.get("service_tier", {}).get("S", "default"),
                 "cache_ttl": item.get("cache_ttl", {}).get("S", ""),
+                "provider_id": item.get("provider_id", {}).get("S", ""),
             }
         except Exception:
             return None
@@ -86,6 +87,7 @@ class APIKeyManager:
         rate_limit: Optional[int] = 100,
         service_tier: Optional[str] = "default",
         cache_ttl: Optional[str] = "",
+        provider_id: Optional[str] = None,
     ) -> str:
         """Create a new API key. Returns the api_key string."""
         api_key = f"sk-{uuid4().hex}"
@@ -108,6 +110,8 @@ class APIKeyManager:
             "created_at": now,
             "updated_at": now,
         }
+        if provider_id:
+            item["provider_id"] = provider_id
 
         self.table.put_item(Item=item)
         return api_key
@@ -891,3 +895,114 @@ class ConfigManager:
             )
         except Exception:
             pass
+
+
+class ProviderManager:
+    """Manage credential providers in DynamoDB."""
+
+    def __init__(self, dynamodb_client: DynamoDBClient):
+        self.client = dynamodb_client.client
+        self.resource = dynamodb_client.resource
+        self.table_name = settings.dynamodb_providers_table
+        self.table = self.resource.Table(self.table_name)
+
+    def create_provider(
+        self,
+        name: str,
+        aws_region: str,
+        auth_type: str,
+        access_key_id: Optional[str] = None,
+        secret_access_key: Optional[str] = None,
+        bearer_token: Optional[str] = None,
+        endpoint_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        provider_id = str(uuid4())
+        now = int(time.time())
+
+        item: Dict[str, Any] = {
+            "provider_id": provider_id,
+            "name": name,
+            "aws_region": aws_region,
+            "auth_type": auth_type,
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+        if access_key_id:
+            item["access_key_id"] = access_key_id
+        if secret_access_key:
+            item["secret_access_key"] = secret_access_key
+        if bearer_token:
+            item["bearer_token"] = bearer_token
+        if endpoint_url:
+            item["endpoint_url"] = endpoint_url
+
+        self.table.put_item(Item=item)
+        return item
+
+    def get_provider(self, provider_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            response = self.table.get_item(Key={"provider_id": provider_id})
+            item = response.get("Item")
+            if not item:
+                return None
+            return self._serialize_item(item)
+        except Exception:
+            return None
+
+    def list_providers(self) -> Dict[str, Any]:
+        try:
+            response = self.table.scan()
+            items = [self._serialize_item(i) for i in response.get("Items", [])]
+            items.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+            return {"items": items, "count": len(items)}
+        except Exception as e:
+            print(f"[ProviderManager] Error listing providers: {e}")
+            return {"items": [], "count": 0}
+
+    def update_provider(self, provider_id: str, **kwargs) -> Optional[Dict[str, Any]]:
+        try:
+            update_parts = []
+            expr_names = {}
+            expr_values = {}
+
+            for key, value in kwargs.items():
+                if value is None:
+                    continue
+                attr_name = f"#{key}"
+                attr_value = f":{key}"
+                update_parts.append(f"{attr_name} = {attr_value}")
+                expr_names[attr_name] = key
+                expr_values[attr_value] = value
+
+            update_parts.append("#updated_at = :updated_at")
+            expr_names["#updated_at"] = "updated_at"
+            expr_values[":updated_at"] = int(time.time())
+
+            self.table.update_item(
+                Key={"provider_id": provider_id},
+                UpdateExpression="SET " + ", ".join(update_parts),
+                ExpressionAttributeNames=expr_names,
+                ExpressionAttributeValues=expr_values,
+            )
+            return self.get_provider(provider_id)
+        except Exception as e:
+            print(f"[ProviderManager] Error updating provider: {e}")
+            return None
+
+    def delete_provider(self, provider_id: str) -> bool:
+        try:
+            self.table.delete_item(Key={"provider_id": provider_id})
+            return True
+        except Exception as e:
+            print(f"[ProviderManager] Error deleting provider: {e}")
+            return False
+
+    def _serialize_item(self, item: Dict) -> Dict[str, Any]:
+        result = {}
+        for key, value in item.items():
+            if isinstance(value, Decimal):
+                result[key] = int(value) if value == int(value) else float(value)
+            else:
+                result[key] = value
+        return result

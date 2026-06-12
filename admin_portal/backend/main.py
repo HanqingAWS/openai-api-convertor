@@ -92,8 +92,9 @@ app.include_router(api_keys.router, prefix=f"{API_PREFIX}/keys", tags=["API Keys
 app.include_router(pricing.router, prefix=f"{API_PREFIX}/pricing", tags=["Model Pricing"])
 app.include_router(model_mapping.router, prefix=f"{API_PREFIX}/model-mapping", tags=["Model Mapping"])
 
-from admin_portal.backend.api import openai_config
+from admin_portal.backend.api import openai_config, providers
 app.include_router(openai_config.router, prefix=f"{API_PREFIX}/openai-config", tags=["OpenAI Configuration"])
+app.include_router(providers.router, prefix=f"{API_PREFIX}/providers", tags=["Providers"])
 
 
 @app.get("/health")

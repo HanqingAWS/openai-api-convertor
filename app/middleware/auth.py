@@ -32,8 +32,15 @@ async def get_api_key_info(
     api_key: Optional[str] = Depends(extract_api_key),
 ) -> dict:
     """Validate API key and return key info."""
-    # Skip auth if disabled
+    # Skip auth if disabled — but still look up key if provided (for provider binding)
     if not settings.require_api_key:
+        if api_key:
+            dynamodb_client = getattr(request.app.state, "dynamodb_client", None)
+            if dynamodb_client:
+                api_key_manager = APIKeyManager(dynamodb_client)
+                key_info = api_key_manager.validate_api_key(api_key)
+                if key_info:
+                    return key_info
         return {"api_key": "anonymous", "user_id": "anonymous"}
 
     if not api_key:

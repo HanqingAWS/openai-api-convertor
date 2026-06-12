@@ -31,7 +31,6 @@ async def get_openai_config():
     return OpenAIConfigResponse(
         base_url=configs.get("openai_base_url", DEFAULT_BASE_URL),
         auth_mode=configs.get("openai_auth_mode", "dynamic"),
-        bearer_token=configs.get("openai_bearer_token"),
         updated_at=configs.get("openai_updated_at"),
     )
 
@@ -44,18 +43,6 @@ async def update_openai_config(request: OpenAIConfigUpdate):
     if request.base_url is not None:
         manager.set_config("openai_base_url", request.base_url)
 
-    if request.auth_mode is not None:
-        if request.auth_mode not in ("dynamic", "static"):
-            from fastapi import HTTPException, status
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="auth_mode must be 'dynamic' or 'static'",
-            )
-        manager.set_config("openai_auth_mode", request.auth_mode)
-
-    if request.bearer_token is not None:
-        manager.set_config("openai_bearer_token", request.bearer_token)
-
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).isoformat()
     manager.set_config("openai_updated_at", ts)
@@ -64,6 +51,5 @@ async def update_openai_config(request: OpenAIConfigUpdate):
     return OpenAIConfigResponse(
         base_url=configs.get("openai_base_url", DEFAULT_BASE_URL),
         auth_mode=configs.get("openai_auth_mode", "dynamic"),
-        bearer_token=configs.get("openai_bearer_token"),
         updated_at=configs.get("openai_updated_at"),
     )

@@ -8,6 +8,7 @@ import {
   useReactivateApiKey,
   useDeleteApiKey,
   useDashboardStats,
+  useProviders,
 } from '../hooks';
 import type { ApiKey, ApiKeyCreate, ApiKeyUpdate } from '../types';
 import { formatTokens } from '../utils';
@@ -61,6 +62,7 @@ function ApiKeyForm({
 }) {
   const { t } = useTranslation();
   const isEdit = !!initialData;
+  const { data: providersData } = useProviders();
 
   const [formData, setFormData] = useState({
     user_id: initialData?.user_id || '',
@@ -71,6 +73,7 @@ function ApiKeyForm({
     rate_limit: initialData?.rate_limit || 1000,
     service_tier: initialData?.service_tier || 'default',
     cache_ttl: initialData?.cache_ttl || '',
+    provider_id: initialData?.provider_id || '',
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -189,6 +192,29 @@ function ApiKeyForm({
         </select>
         <p className="mt-1 text-xs text-slate-500">
           Prompt caching TTL for this key. "Proxy Default" uses the global setting.
+        </p>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-slate-300 mb-1">
+          Provider
+        </label>
+        <select
+          value={formData.provider_id}
+          onChange={(e) => setFormData({ ...formData, provider_id: e.target.value })}
+          className="w-full px-3 py-2 bg-input-bg border border-border-dark rounded-lg text-white focus:border-primary focus:ring-1 focus:ring-primary"
+        >
+          <option value="">None (IAM Role)</option>
+          {providersData?.items
+            ?.filter((p) => p.is_active)
+            .map((p) => (
+              <option key={p.provider_id} value={p.provider_id}>
+                {p.name} ({p.aws_region} - {p.auth_type === 'ak_sk' ? 'AK/SK' : 'Bearer Token'})
+              </option>
+            ))}
+        </select>
+        <p className="mt-1 text-xs text-slate-500">
+          Bind this key to a provider for custom AWS credentials. "None" uses the default IAM Role.
         </p>
       </div>
 

@@ -1,6 +1,7 @@
 """Bedrock service for invoking Claude models."""
 import asyncio
 import json
+import threading
 from typing import Any, AsyncGenerator, Dict, Optional
 from uuid import uuid4
 
@@ -45,6 +46,8 @@ class BedrockService:
         us_east_kwargs = {**client_kwargs, "region_name": "us-east-1"}
         us_east_kwargs.pop("endpoint_url", None)
         self._client_us_east_1 = boto3.client(**us_east_kwargs)
+        self._provider_clients: Dict[str, Any] = {}
+        self._provider_lock = threading.Lock()
         self.openai_to_bedrock = OpenAIToBedrockConverter(dynamodb_client)
         self.bedrock_to_openai = BedrockToOpenAIConverter()
 
@@ -54,11 +57,39 @@ class BedrockService:
                 return self._client_us_east_1
         return self.client
 
+    def _get_client_for_provider(self, provider_info: Dict[str, Any]):
+        provider_id = provider_info["provider_id"]
+        with self._provider_lock:
+            if provider_id in self._provider_clients:
+                return self._provider_clients[provider_id]
+
+        config = Config(
+            read_timeout=settings.bedrock_timeout,
+            connect_timeout=30,
+            retries={"max_attempts": 3, "mode": "adaptive"},
+        )
+        kwargs: Dict[str, Any] = {
+            "service_name": "bedrock-runtime",
+            "region_name": provider_info.get("aws_region", settings.aws_region),
+            "config": config,
+        }
+        if provider_info.get("access_key_id") and provider_info.get("secret_access_key"):
+            kwargs["aws_access_key_id"] = provider_info["access_key_id"]
+            kwargs["aws_secret_access_key"] = provider_info["secret_access_key"]
+        if provider_info.get("endpoint_url"):
+            kwargs["endpoint_url"] = provider_info["endpoint_url"]
+
+        client = boto3.client(**kwargs)
+        with self._provider_lock:
+            self._provider_clients[provider_id] = client
+        return client
+
     async def chat_completion(
         self,
         request: ChatCompletionRequest,
         request_id: Optional[str] = None,
         cache_ttl: Optional[str] = None,
+        provider_info: Optional[Dict[str, Any]] = None,
     ) -> tuple[ChatCompletionResponse, Dict[str, Any]]:
         """Handle non-streaming chat completion.
 
@@ -71,7 +102,10 @@ class BedrockService:
         try:
             bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
             model_id = bedrock_request.pop("modelId")
-            client = self._get_client_for_model(model_id)
+            if provider_info and provider_info.get("auth_type") == "ak_sk":
+                client = self._get_client_for_provider(provider_info)
+            else:
+                client = self._get_client_for_model(model_id)
 
             response = client.converse(modelId=model_id, **bedrock_request)
 
@@ -96,6 +130,7 @@ class BedrockService:
         request: ChatCompletionRequest,
         request_id: Optional[str] = None,
         cache_ttl: Optional[str] = None,
+        provider_info: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """Handle streaming chat completion.
 
@@ -120,7 +155,10 @@ class BedrockService:
             try:
                 bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
                 model_id = bedrock_request.pop("modelId")
-                client = self._get_client_for_model(model_id)
+                if provider_info and provider_info.get("auth_type") == "ak_sk":
+                    client = self._get_client_for_provider(provider_info)
+                else:
+                    client = self._get_client_for_model(model_id)
                 response = client.converse_stream(modelId=model_id, **bedrock_request)
 
                 current_index = 0

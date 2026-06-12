@@ -1,14 +1,14 @@
 """Chat completions API endpoint."""
 import json
 import time
-from typing import Optional
+from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.config import settings
-from app.db.dynamodb import UsageTracker
+from app.db.dynamodb import UsageTracker, ProviderManager
 from app.middleware.auth import get_api_key_info
 from app.middleware.rate_limit import check_rate_limit
 from app.schemas.openai import ChatCompletionRequest, ChatCompletionResponse
@@ -37,6 +37,21 @@ def get_usage_tracker(request: Request) -> Optional[UsageTracker]:
     if dynamodb_client:
         return UsageTracker(dynamodb_client)
     return None
+
+
+def resolve_provider(api_key_info: dict, request: Request) -> Optional[Dict[str, Any]]:
+    """Resolve provider credentials from api_key_info.provider_id."""
+    provider_id = api_key_info.get("provider_id", "")
+    if not provider_id:
+        return None
+    dynamodb_client = getattr(request.app.state, "dynamodb_client", None)
+    if not dynamodb_client:
+        return None
+    manager = ProviderManager(dynamodb_client)
+    provider = manager.get_provider(provider_id)
+    if not provider or not provider.get("is_active", False):
+        return None
+    return provider
 
 
 def resolve_cache_ttl(request_data: ChatCompletionRequest, api_key_info: dict) -> Optional[str]:
@@ -79,6 +94,9 @@ async def create_chat_completion(
     # Store api_key_info in request state for rate limiting
     request.state.api_key_info = api_key_info
 
+    # Resolve provider credentials (if API key is bound to a provider)
+    provider_info = resolve_provider(api_key_info, request)
+
     # Resolve model ID to detect OpenAI vs Claude
     resolved_model_id = bedrock_service.resolve_model_id(request_data.model)
 
@@ -88,6 +106,7 @@ async def create_chat_completion(
         return await _handle_openai_request(
             request_data, request_id, resolved_model_id,
             openai_service, usage_tracker, api_key_info, start_time,
+            provider_info,
         )
 
     # Resolve cache TTL (Claude models only)
@@ -105,6 +124,7 @@ async def create_chat_completion(
                     usage_tracker,
                     start_time,
                     cache_ttl,
+                    provider_info,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -116,7 +136,7 @@ async def create_chat_completion(
         else:
             # Non-streaming response
             response, cache_usage = await bedrock_service.chat_completion(
-                request_data, request_id, cache_ttl=cache_ttl
+                request_data, request_id, cache_ttl=cache_ttl, provider_info=provider_info
             )
 
             # Record usage
@@ -172,6 +192,7 @@ async def _stream_response(
     usage_tracker: Optional[UsageTracker],
     start_time: float,
     cache_ttl: Optional[str],
+    provider_info: Optional[Dict[str, Any]] = None,
 ):
     """Stream chat completion response."""
     prompt_tokens = 0
@@ -184,7 +205,7 @@ async def _stream_response(
 
     try:
         async for chunk in bedrock_service.chat_completion_stream(
-            request_data, request_id, cache_ttl=cache_ttl
+            request_data, request_id, cache_ttl=cache_ttl, provider_info=provider_info
         ):
             # Internal usage marker — extract but don't send to client
             if chunk.startswith("__usage__:"):
@@ -232,6 +253,7 @@ async def _handle_openai_request(
     usage_tracker: Optional[UsageTracker],
     api_key_info: dict,
     start_time: float,
+    provider_info: Optional[Dict[str, Any]] = None,
 ):
     """Handle requests for OpenAI models routed to Bedrock Mantle."""
     try:
@@ -240,6 +262,7 @@ async def _handle_openai_request(
                 _stream_openai_response(
                     request_data, request_id, resolved_model_id,
                     openai_service, usage_tracker, api_key_info, start_time,
+                    provider_info,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -252,6 +275,7 @@ async def _handle_openai_request(
             response, cache_usage = await openai_service.chat_completion(
                 request_data, resolved_model_id, request_id,
                 api_key=api_key_info.get("api_key"),
+                provider_info=provider_info,
             )
 
             if usage_tracker:
@@ -301,6 +325,7 @@ async def _stream_openai_response(
     usage_tracker: Optional[UsageTracker],
     api_key_info: dict,
     start_time: float,
+    provider_info: Optional[Dict[str, Any]] = None,
 ):
     """Stream OpenAI model response."""
     prompt_tokens = 0
@@ -313,6 +338,7 @@ async def _stream_openai_response(
         async for chunk in openai_service.chat_completion_stream(
             request_data, resolved_model_id, request_id,
             api_key=api_key_info.get("api_key"),
+            provider_info=provider_info,
         ):
             if chunk.startswith("__usage__:"):
                 try:

@@ -50,6 +50,7 @@ const ecsStack = new ECSStack(app, `OpenAIProxy-ECS-${config.environmentName}`, 
   pricingTable: dynamodbStack.pricingTable,
   usageStatsTable: dynamodbStack.usageStatsTable,
   configTable: dynamodbStack.configTable,
+  providersTable: dynamodbStack.providersTable,
   cognitoUserPoolId: cognitoStack?.userPool.userPoolId,
   cognitoClientId: cognitoStack?.userPoolClient.userPoolClientId,
 });

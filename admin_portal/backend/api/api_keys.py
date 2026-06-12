@@ -122,6 +122,7 @@ async def create_api_key(request: ApiKeyCreate):
         rate_limit=request.rate_limit,
         service_tier=request.service_tier,
         cache_ttl=request.cache_ttl,
+        provider_id=request.provider_id,
     )
 
     # Get the created key details

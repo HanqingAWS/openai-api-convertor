@@ -84,6 +84,14 @@ def create_tables():
             ],
             "BillingMode": "PAY_PER_REQUEST",
         },
+        {
+            "TableName": "openai-proxy-providers",
+            "KeySchema": [{"AttributeName": "provider_id", "KeyType": "HASH"}],
+            "AttributeDefinitions": [
+                {"AttributeName": "provider_id", "AttributeType": "S"},
+            ],
+            "BillingMode": "PAY_PER_REQUEST",
+        },
     ]
 
     for table_def in tables:

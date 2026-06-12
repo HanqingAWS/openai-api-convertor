@@ -22,6 +22,7 @@ export interface ECSStackProps extends cdk.StackProps {
   pricingTable: dynamodb.Table;
   usageStatsTable: dynamodb.Table;
   configTable: dynamodb.Table;
+  providersTable: dynamodb.Table;
   // Cognito (optional - for admin portal)
   cognitoUserPoolId?: string;
   cognitoClientId?: string;
@@ -37,7 +38,7 @@ export class ECSStack extends cdk.Stack {
 
     const { config, vpc, albSecurityGroup, ecsSecurityGroup } = props;
     const { apiKeysTable, usageTable, modelMappingTable } = props;
-    const { pricingTable, usageStatsTable, configTable } = props;
+    const { pricingTable, usageStatsTable, configTable, providersTable } = props;
     const { cognitoUserPoolId, cognitoClientId } = props;
 
     // ECS Cluster
@@ -107,6 +108,7 @@ export class ECSStack extends cdk.Stack {
     pricingTable.grantReadWriteData(taskRole);
     usageStatsTable.grantReadWriteData(taskRole);
     configTable.grantReadWriteData(taskRole);
+    providersTable.grantReadWriteData(taskRole);
 
     // Grant Bedrock permissions
     taskRole.addToPolicy(
@@ -188,6 +190,7 @@ export class ECSStack extends cdk.Stack {
         DYNAMODB_PRICING_TABLE: pricingTable.tableName,
         DYNAMODB_USAGE_STATS_TABLE: usageStatsTable.tableName,
         DYNAMODB_CONFIG_TABLE: configTable.tableName,
+        DYNAMODB_PROVIDERS_TABLE: providersTable.tableName,
         REQUIRE_API_KEY: config.requireApiKey.toString(),
         RATE_LIMIT_ENABLED: config.rateLimitEnabled.toString(),
         RATE_LIMIT_REQUESTS: config.rateLimitRequests.toString(),
@@ -243,7 +246,7 @@ export class ECSStack extends cdk.Stack {
       this.createAdminPortalService(
         config, vpc, ecsSecurityGroup, taskExecutionRole, taskRole,
         cpuArchitecture, dockerPlatform, apiKeysTable, usageTable, modelMappingTable,
-        pricingTable, usageStatsTable, configTable, cognitoUserPoolId, cognitoClientId
+        pricingTable, usageStatsTable, configTable, providersTable, cognitoUserPoolId, cognitoClientId
       );
     }
 
@@ -288,6 +291,7 @@ export class ECSStack extends cdk.Stack {
     pricingTable: dynamodb.Table,
     usageStatsTable: dynamodb.Table,
     configTable: dynamodb.Table,
+    providersTable: dynamodb.Table,
     cognitoUserPoolId?: string,
     cognitoClientId?: string,
   ): void {
@@ -332,6 +336,7 @@ export class ECSStack extends cdk.Stack {
         DYNAMODB_PRICING_TABLE: pricingTable.tableName,
         DYNAMODB_USAGE_STATS_TABLE: usageStatsTable.tableName,
         DYNAMODB_CONFIG_TABLE: configTable.tableName,
+        DYNAMODB_PROVIDERS_TABLE: providersTable.tableName,
         // Cognito (if configured)
         ...(cognitoUserPoolId && { COGNITO_USER_POOL_ID: cognitoUserPoolId }),
         ...(cognitoClientId && { COGNITO_CLIENT_ID: cognitoClientId }),

@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     dynamodb_config_table: str = Field(
         default="openai-proxy-config", alias="DYNAMODB_CONFIG_TABLE"
     )
+    dynamodb_providers_table: str = Field(
+        default="openai-proxy-providers", alias="DYNAMODB_PROVIDERS_TABLE"
+    )
 
     # Authentication
     api_key_header: str = Field(default="x-api-key", alias="API_KEY_HEADER")
@@ -72,9 +75,10 @@ class Settings(BaseSettings):
             "claude-sonnet-4-5": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
             "claude-sonnet-4-6": "global.anthropic.claude-sonnet-4-6",
             "claude-haiku-4-5": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
-            "claude-fable-5": "global.anthropic.claude-fable-5",
             "openai-gpt-5-5": "openai.gpt-5.5",
             "openai-gpt-5-4": "openai.gpt-5.4",
+            "gpt-5.5": "openai.gpt-5.5",
+            "gpt-5.4": "openai.gpt-5.4",
         },
         alias="DEFAULT_MODEL_MAPPING",
     )

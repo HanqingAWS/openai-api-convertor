@@ -3,8 +3,9 @@ import asyncio
 import hashlib
 import json
 import re
+import threading
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from openai import OpenAI
@@ -23,7 +24,7 @@ from app.schemas.openai import (
     PromptTokensDetails,
     Usage,
 )
-from app.services.openai_token import OpenAITokenManager
+from app.services.openai_token import OpenAITokenManager, TOKEN_CACHE_SECONDS
 
 
 class OpenAIService:
@@ -32,8 +33,54 @@ class OpenAIService:
     def __init__(self, dynamodb_client=None):
         self.token_manager = OpenAITokenManager(dynamodb_client)
         self._client: Optional[OpenAI] = None
+        self._provider_token_cache: Dict[str, Tuple[str, float]] = {}
+        self._provider_token_lock = threading.Lock()
 
-    def _get_client(self) -> OpenAI:
+    def _get_provider_ak_sk_token(self, provider_info: Dict[str, Any]) -> str:
+        """Generate a short-lived bearer token from provider's AK/SK credentials."""
+        provider_id = provider_info.get("provider_id", "")
+        now = time.time()
+
+        cached = self._provider_token_cache.get(provider_id)
+        if cached and now < cached[1]:
+            return cached[0]
+
+        with self._provider_token_lock:
+            cached = self._provider_token_cache.get(provider_id)
+            if cached and now < cached[1]:
+                return cached[0]
+
+            import boto3
+            from aws_bedrock_token_generator import BedrockTokenGenerator
+
+            session = boto3.Session(
+                aws_access_key_id=provider_info["access_key_id"],
+                aws_secret_access_key=provider_info["secret_access_key"],
+                region_name="us-east-2",
+            )
+            generator = BedrockTokenGenerator(region="us-east-2", session=session)
+            token = generator.generate_token()
+            self._provider_token_cache[provider_id] = (token, now + TOKEN_CACHE_SECONDS)
+            return token
+
+    def _invalidate_provider_token(self, provider_info: Dict[str, Any]) -> None:
+        provider_id = provider_info.get("provider_id", "")
+        self._provider_token_cache.pop(provider_id, None)
+
+    def _get_client(self, provider_info: Optional[Dict[str, Any]] = None) -> OpenAI:
+        if provider_info:
+            auth_type = provider_info.get("auth_type")
+            if auth_type == "bearer_token" and provider_info.get("bearer_token"):
+                return OpenAI(
+                    base_url=self.token_manager.get_base_url(),
+                    api_key=provider_info["bearer_token"],
+                )
+            if auth_type == "ak_sk" and provider_info.get("access_key_id"):
+                token = self._get_provider_ak_sk_token(provider_info)
+                return OpenAI(
+                    base_url=self.token_manager.get_base_url(),
+                    api_key=token,
+                )
         return OpenAI(
             base_url=self.token_manager.get_base_url(),
             api_key=self.token_manager.get_api_key(),
@@ -221,15 +268,22 @@ class OpenAIService:
 
         return kwargs
 
-    def _call_with_retry(self, kwargs: Dict[str, Any]):
+    def _call_with_retry(self, kwargs: Dict[str, Any], provider_info: Optional[Dict[str, Any]] = None):
         """Call Responses API with one retry on 401 (token expired)."""
         from openai import AuthenticationError
-        client = self._get_client()
+        client = self._get_client(provider_info)
         try:
             return client.responses.create(**kwargs)
         except AuthenticationError:
+            if provider_info:
+                if provider_info.get("auth_type") == "bearer_token":
+                    raise
+                if provider_info.get("auth_type") == "ak_sk":
+                    self._invalidate_provider_token(provider_info)
+                    client = self._get_client(provider_info)
+                    return client.responses.create(**kwargs)
             self.token_manager.invalidate_token()
-            client = self._get_client()
+            client = self._get_client(provider_info)
             return client.responses.create(**kwargs)
 
     async def chat_completion(
@@ -238,6 +292,7 @@ class OpenAIService:
         model_id: str,
         request_id: Optional[str] = None,
         api_key: Optional[str] = None,
+        provider_info: Optional[Dict[str, Any]] = None,
     ) -> tuple[ChatCompletionResponse, Dict[str, Any]]:
         """Non-streaming completion via Responses API."""
         request_id = request_id or f"chatcmpl-{uuid4().hex[:24]}"
@@ -245,7 +300,7 @@ class OpenAIService:
 
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
-            None, lambda: self._call_with_retry(kwargs)
+            None, lambda: self._call_with_retry(kwargs, provider_info)
         )
 
         # Convert response
@@ -324,6 +379,7 @@ class OpenAIService:
         model_id: str,
         request_id: Optional[str] = None,
         api_key: Optional[str] = None,
+        provider_info: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """Streaming completion via Responses API."""
         request_id = request_id or f"chatcmpl-{uuid4().hex[:24]}"
@@ -338,12 +394,20 @@ class OpenAIService:
             try:
                 from openai import AuthenticationError
                 try:
-                    client = self._get_client()
+                    client = self._get_client(provider_info)
                     stream = client.responses.create(**kwargs)
                 except AuthenticationError:
-                    self.token_manager.invalidate_token()
-                    client = self._get_client()
-                    stream = client.responses.create(**kwargs)
+                    if provider_info:
+                        if provider_info.get("auth_type") == "bearer_token":
+                            raise
+                        if provider_info.get("auth_type") == "ak_sk":
+                            self._invalidate_provider_token(provider_info)
+                            client = self._get_client(provider_info)
+                            stream = client.responses.create(**kwargs)
+                    else:
+                        self.token_manager.invalidate_token()
+                        client = self._get_client(provider_info)
+                        stream = client.responses.create(**kwargs)
 
                 # Emit role chunk
                 role_chunk = ChatCompletionChunk(
