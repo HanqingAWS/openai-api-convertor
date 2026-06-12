@@ -251,6 +251,7 @@ export default function ApiKeys() {
     search: search || undefined,
   });
 
+  const { data: providersData } = useProviders();
   const { data: stats } = useDashboardStats();
   const createMutation = useCreateApiKey();
   const updateMutation = useUpdateApiKey();
@@ -355,6 +356,12 @@ export default function ApiKeys() {
     } catch {
       return '';
     }
+  };
+
+  const getProviderName = (providerId?: string) => {
+    if (!providerId) return null;
+    const provider = providersData?.items?.find((p) => p.provider_id === providerId);
+    return provider ? provider.name : providerId.slice(0, 8) + '...';
   };
 
   const budgetPercent = stats
@@ -537,6 +544,9 @@ export default function ApiKeys() {
                 <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:table-cell">
                   CACHE TTL
                 </th>
+                <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:table-cell">
+                  PROVIDER
+                </th>
                 <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">
                   {t('common.status')}
                 </th>
@@ -548,7 +558,7 @@ export default function ApiKeys() {
             <tbody className="divide-y divide-border-dark">
               {isLoading ? (
                 <tr>
-                  <td colSpan={10} className="px-6 py-12 text-center">
+                  <td colSpan={11} className="px-6 py-12 text-center">
                     <span className="material-symbols-outlined animate-spin text-4xl text-primary">
                       progress_activity
                     </span>
@@ -556,7 +566,7 @@ export default function ApiKeys() {
                 </tr>
               ) : data?.items.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={11} className="px-6 py-12 text-center text-slate-400">
                     No API keys found
                   </td>
                 </tr>
@@ -747,6 +757,17 @@ export default function ApiKeys() {
                         }`}>
                           {key.cache_ttl === '5m' ? '5 Min' : key.cache_ttl === '1h' ? '1 Hour' : key.cache_ttl === 'disabled' ? 'Disabled' : 'Default'}
                         </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap hidden lg:table-cell">
+                        {key.provider_id ? (
+                          <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-900/30 text-blue-400 border border-blue-800">
+                            {getProviderName(key.provider_id)}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                            IAM Role
+                          </span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span

@@ -47,7 +47,7 @@ function ProviderForm({
 }) {
   const [name, setName] = useState(initial?.name || '');
   const [awsRegion, setAwsRegion] = useState(initial?.aws_region || 'us-east-1');
-  const [authType, setAuthType] = useState<'ak_sk' | 'bearer_token'>(initial?.auth_type || 'ak_sk');
+  const [authType, setAuthType] = useState<'ak_sk' | 'bearer_token'>(initial?.auth_type || 'bearer_token');
   const [accessKeyId, setAccessKeyId] = useState('');
   const [secretAccessKey, setSecretAccessKey] = useState('');
   const [bearerToken, setBearerToken] = useState('');
