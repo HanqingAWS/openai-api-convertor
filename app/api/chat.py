@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.config import settings
-from app.core.exceptions import InvalidRequestError, OpenAIProxyError, ProviderConfigError
+from app.core.exceptions import OpenAIProxyError, ProviderConfigError
 from app.db.dynamodb import UsageTracker, ProviderManager
 from app.middleware.auth import get_api_key_info
 from app.middleware.rate_limit import check_rate_limit
@@ -81,46 +81,31 @@ def resolve_provider(api_key_info: dict, request: Request) -> Optional[Dict[str,
 
 
 def validate_provider_for_model(provider_info: Optional[Dict[str, Any]], resolved_model_id: str) -> None:
-    """Fail-closed check that a bound provider can actually serve this model.
+    """Fail-closed check that a bound provider has usable credentials.
 
-    Covers BOTH paths: Claude (Bedrock Converse, needs ak_sk) and OpenAI
-    (Bedrock Mantle, accepts bearer_token or ak_sk-derived token). Raises
-    rather than letting the request silently run on host credentials.
+    Both auth types serve both model families: ak_sk authenticates Bedrock
+    Converse (Claude) via SigV4 and Bedrock Mantle (OpenAI) via a derived token;
+    bearer_token authenticates Converse via an injected Authorization header and
+    Mantle directly. So the only requirement is that the bound provider's
+    credentials are complete — raise rather than fall back to host creds.
     """
     if not provider_info:
         return  # unbound — host role by design
 
     auth_type = provider_info.get("auth_type", "")
     name = provider_info.get("name", provider_info.get("provider_id", ""))
-    ak = provider_info.get("access_key_id")
-    sk = provider_info.get("secret_access_key")
-    bearer = provider_info.get("bearer_token")
 
-    if is_openai_model(resolved_model_id):
-        # OpenAI/Mantle path: bearer_token used directly, or ak_sk → short-lived token
-        if auth_type == "bearer_token":
-            if not bearer:
-                logger.warning("provider %s bearer_token empty", name)
-                raise ProviderConfigError(f"Provider '{name}' has no bearer token configured.")
-        elif auth_type == "ak_sk":
-            if not ak or not sk:
-                logger.warning("provider %s ak_sk incomplete", name)
-                raise ProviderConfigError(f"Provider '{name}' has incomplete AK/SK credentials.")
-        else:
-            logger.warning("provider %s unknown auth_type %r", name, auth_type)
-            raise ProviderConfigError(f"Provider '{name}' has unknown auth_type '{auth_type}'.")
-        return
-
-    # Claude / Bedrock Converse path: only ak_sk can authenticate boto3
-    if auth_type != "ak_sk":
-        logger.warning("provider %s auth_type %r cannot serve Claude", name, auth_type)
-        raise InvalidRequestError(
-            f"Provider '{name}' uses '{auth_type}', which cannot authenticate AWS Bedrock "
-            "Converse (Claude models). Bind an AK/SK provider, or use an OpenAI model."
-        )
-    if not ak or not sk:
-        logger.warning("provider %s ak_sk incomplete (claude)", name)
-        raise ProviderConfigError(f"Provider '{name}' has incomplete AK/SK credentials.")
+    if auth_type == "bearer_token":
+        if not provider_info.get("bearer_token"):
+            logger.warning("provider %s bearer_token empty", name)
+            raise ProviderConfigError(f"Provider '{name}' has no bearer token configured.")
+    elif auth_type == "ak_sk":
+        if not provider_info.get("access_key_id") or not provider_info.get("secret_access_key"):
+            logger.warning("provider %s ak_sk incomplete", name)
+            raise ProviderConfigError(f"Provider '{name}' has incomplete AK/SK credentials.")
+    else:
+        logger.warning("provider %s unknown auth_type %r", name, auth_type)
+        raise ProviderConfigError(f"Provider '{name}' has unknown auth_type '{auth_type}'.")
 
 
 def resolve_cache_ttl(request_data: ChatCompletionRequest, api_key_info: dict) -> Optional[str]:

@@ -7,10 +7,11 @@ from typing import Any, AsyncGenerator, Dict, Optional
 from uuid import uuid4
 
 import boto3
+from botocore import UNSIGNED
 from botocore.config import Config
 
 from app.core.config import settings
-from app.core.exceptions import BedrockAPIError, InvalidRequestError, OpenAIProxyError, ProviderConfigError
+from app.core.exceptions import BedrockAPIError, OpenAIProxyError, ProviderConfigError
 from app.converters.openai_to_bedrock import OpenAIToBedrockConverter
 from app.converters.bedrock_to_openai import BedrockToOpenAIConverter
 from app.schemas.openai import ChatCompletionRequest, ChatCompletionResponse
@@ -61,35 +62,72 @@ class BedrockService:
         return self.client
 
     def _get_client_for_provider(self, provider_info: Dict[str, Any]):
+        """Build a bedrock-runtime client authenticated as the bound provider.
+
+        ak_sk        → SigV4 with the provider's access key / secret key.
+        bearer_token → an UNSIGNED client with the provider's Bedrock API key
+                       injected as an ``Authorization: Bearer`` header. This is
+                       the same auth that ``AWS_BEARER_TOKEN_BEDROCK`` enables,
+                       but per-client so concurrent tenants never clobber a
+                       process-global env var.
+
+        Fail-closed: never returns a host-credentialed client when a provider is
+        bound — raises ProviderConfigError on missing/incomplete credentials.
+        """
         provider_id = provider_info["provider_id"]
         with self._provider_lock:
             if provider_id in self._provider_clients:
                 return self._provider_clients[provider_id]
 
-        config = Config(
-            read_timeout=settings.bedrock_timeout,
-            connect_timeout=30,
-            retries={"max_attempts": 3, "mode": "adaptive"},
-        )
-        kwargs: Dict[str, Any] = {
-            "service_name": "bedrock-runtime",
-            "region_name": provider_info.get("aws_region", settings.aws_region),
-            "config": config,
-        }
-        # Fail-closed: both AK and SK are required. Never build a credential-less
-        # client (boto3 would silently fall back to the host ECS task role).
-        if not provider_info.get("access_key_id") or not provider_info.get("secret_access_key"):
-            logger.warning("provider %s has incomplete ak_sk credentials", provider_id)
-            raise ProviderConfigError(
-                f"Provider '{provider_info.get('name', provider_id)}' has incomplete AK/SK credentials "
-                "(access_key_id and secret_access_key are both required); refusing host fallback."
-            )
-        kwargs["aws_access_key_id"] = provider_info["access_key_id"]
-        kwargs["aws_secret_access_key"] = provider_info["secret_access_key"]
-        if provider_info.get("endpoint_url"):
-            kwargs["endpoint_url"] = provider_info["endpoint_url"]
+        region = provider_info.get("aws_region") or settings.aws_region
+        auth_type = provider_info.get("auth_type")
+        name = provider_info.get("name", provider_id)
+        retries = {"max_attempts": 3, "mode": "adaptive"}
 
-        client = boto3.client(**kwargs)
+        if auth_type == "bearer_token":
+            token = provider_info.get("bearer_token")
+            if not token:
+                logger.warning("provider %s bearer_token empty", provider_id)
+                raise ProviderConfigError(f"Provider '{name}' has no bearer token configured.")
+            config = Config(
+                read_timeout=settings.bedrock_timeout, connect_timeout=30,
+                retries=retries, signature_version=UNSIGNED,
+            )
+            kwargs: Dict[str, Any] = {
+                "service_name": "bedrock-runtime", "region_name": region, "config": config,
+            }
+            if provider_info.get("endpoint_url"):
+                kwargs["endpoint_url"] = provider_info["endpoint_url"]
+            client = boto3.client(**kwargs)
+            header_value = f"Bearer {token}"
+            client.meta.events.register(
+                "before-send.bedrock-runtime",
+                lambda request, **kw: request.headers.__setitem__("Authorization", header_value),
+            )
+        elif auth_type == "ak_sk":
+            # Fail-closed: both AK and SK required; never build a credential-less
+            # client (boto3 would silently fall back to the host ECS task role).
+            if not provider_info.get("access_key_id") or not provider_info.get("secret_access_key"):
+                logger.warning("provider %s has incomplete ak_sk credentials", provider_id)
+                raise ProviderConfigError(
+                    f"Provider '{name}' has incomplete AK/SK credentials "
+                    "(access_key_id and secret_access_key are both required); refusing host fallback."
+                )
+            config = Config(
+                read_timeout=settings.bedrock_timeout, connect_timeout=30, retries=retries,
+            )
+            kwargs = {
+                "service_name": "bedrock-runtime", "region_name": region, "config": config,
+                "aws_access_key_id": provider_info["access_key_id"],
+                "aws_secret_access_key": provider_info["secret_access_key"],
+            }
+            if provider_info.get("endpoint_url"):
+                kwargs["endpoint_url"] = provider_info["endpoint_url"]
+            client = boto3.client(**kwargs)
+        else:
+            logger.warning("provider %s unknown auth_type %r", provider_id, auth_type)
+            raise ProviderConfigError(f"Provider '{name}' has unknown auth_type '{auth_type}'.")
+
         with self._provider_lock:
             self._provider_clients[provider_id] = client
         return client
@@ -112,19 +150,9 @@ class BedrockService:
         try:
             bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
             model_id = bedrock_request.pop("modelId")
-            # Fail-closed: a bound provider must be ak_sk for Converse; never fall
-            # back to the host role when a provider is bound.
+            # Fail-closed: a bound provider must authenticate as itself (ak_sk or
+            # bearer_token); never fall back to the host role when one is bound.
             if provider_info:
-                if provider_info.get("auth_type") != "ak_sk":
-                    logger.warning(
-                        "provider %s auth_type %r cannot serve Claude/Converse",
-                        provider_info.get("provider_id"), provider_info.get("auth_type"),
-                    )
-                    raise InvalidRequestError(
-                        f"Provider '{provider_info.get('name')}' uses "
-                        f"'{provider_info.get('auth_type')}', which cannot authenticate AWS Bedrock "
-                        "Converse (Claude). Use an AK/SK provider, or an OpenAI model."
-                    )
                 client = self._get_client_for_provider(provider_info)
             else:
                 client = self._get_client_for_model(model_id)
@@ -180,18 +208,8 @@ class BedrockService:
             try:
                 bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
                 model_id = bedrock_request.pop("modelId")
-                # Fail-closed: a bound provider must be ak_sk for Converse.
+                # Fail-closed: a bound provider authenticates as itself (ak_sk or bearer).
                 if provider_info:
-                    if provider_info.get("auth_type") != "ak_sk":
-                        logger.warning(
-                            "provider %s auth_type %r cannot serve Claude/Converse (stream)",
-                            provider_info.get("provider_id"), provider_info.get("auth_type"),
-                        )
-                        raise InvalidRequestError(
-                            f"Provider '{provider_info.get('name')}' uses "
-                            f"'{provider_info.get('auth_type')}', which cannot authenticate AWS Bedrock "
-                            "Converse (Claude). Use an AK/SK provider, or an OpenAI model."
-                        )
                     client = self._get_client_for_provider(provider_info)
                 else:
                     client = self._get_client_for_model(model_id)
