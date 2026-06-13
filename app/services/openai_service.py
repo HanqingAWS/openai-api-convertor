@@ -58,8 +58,9 @@ class OpenAIService:
                 aws_secret_access_key=provider_info["secret_access_key"],
                 region_name="us-east-2",
             )
-            generator = BedrockTokenGenerator(region="us-east-2", session=session)
-            token = generator.generate_token()
+            credentials = session.get_credentials().get_frozen_credentials()
+            generator = BedrockTokenGenerator()
+            token = generator.get_token(credentials, "us-east-2")
             self._provider_token_cache[provider_id] = (token, now + TOKEN_CACHE_SECONDS)
             return token
 

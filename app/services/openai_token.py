@@ -88,9 +88,12 @@ class OpenAITokenManager:
             if self._cached_token and now < self._token_expiry:
                 return self._cached_token
             try:
+                import boto3
                 from aws_bedrock_token_generator import BedrockTokenGenerator
-                generator = BedrockTokenGenerator(region="us-east-2")
-                token = generator.generate_token()
+                session = boto3.Session(region_name="us-east-2")
+                credentials = session.get_credentials().get_frozen_credentials()
+                generator = BedrockTokenGenerator()
+                token = generator.get_token(credentials, "us-east-2")
                 self._cached_token = token
                 self._token_expiry = now + TOKEN_CACHE_SECONDS
                 self._refresh_scheduled = False

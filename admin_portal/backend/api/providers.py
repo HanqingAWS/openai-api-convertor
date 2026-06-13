@@ -161,8 +161,9 @@ async def test_provider(provider_id: str):
                 aws_secret_access_key=sk,
                 region_name="us-east-2",
             )
-            generator = BedrockTokenGenerator(region="us-east-2", session=session)
-            token = generator.generate_token()
+            credentials = session.get_credentials().get_frozen_credentials()
+            generator = BedrockTokenGenerator()
+            token = generator.get_token(credentials, "us-east-2")
         else:
             return {"success": False, "message": f"Unknown auth_type: {auth_type}"}
 
