@@ -1,5 +1,6 @@
 # Multi-stage Dockerfile for Admin Portal
 # Builds React frontend and packages with FastAPI backend
+# v3: provider test button
 #
 # Build context should be the project root directory:
 #   docker build -f admin_portal/Dockerfile -t admin-portal .

@@ -377,4 +377,10 @@ export const providersApi = {
       throw new Error(error.detail || `HTTP error! status: ${response.status}`);
     }
   },
+
+  test: async (providerId: string): Promise<{ success: boolean; message: string }> => {
+    return apiFetch(`/providers/${encodeURIComponent(providerId)}/test`, {
+      method: 'POST',
+    });
+  },
 };

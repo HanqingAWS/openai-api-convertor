@@ -5,6 +5,7 @@ import {
   useUpdateProvider,
   useDeleteProvider,
 } from '../hooks/useProviders';
+import { providersApi } from '../services/api';
 import type { Provider, ProviderCreate, ProviderUpdate } from '../types';
 
 function SlideOver({
@@ -195,6 +196,8 @@ export default function ProvidersPage() {
   const [showCreatePanel, setShowCreatePanel] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [testing, setTesting] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ id: string; success: boolean; message: string } | null>(null);
 
   const { data, isLoading, error } = useProviders();
   const createMutation = useCreateProvider();
@@ -240,6 +243,19 @@ export default function ProvidersPage() {
       });
     } catch (err) {
       console.error('Failed to toggle provider:', err);
+    }
+  };
+
+  const handleTest = async (providerId: string) => {
+    setTesting(providerId);
+    setTestResult(null);
+    try {
+      const result = await providersApi.test(providerId);
+      setTestResult({ id: providerId, ...result });
+    } catch (err) {
+      setTestResult({ id: providerId, success: false, message: (err as Error).message });
+    } finally {
+      setTesting(null);
     }
   };
 
@@ -327,6 +343,21 @@ export default function ProvidersPage() {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
+                      {testResult && testResult.id === provider.provider_id && (
+                        <span className={`text-xs mr-1 ${testResult.success ? 'text-green-400' : 'text-red-400'}`}>
+                          {testResult.success ? '✓' : '✗'} {testResult.message}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => handleTest(provider.provider_id)}
+                        disabled={testing === provider.provider_id}
+                        className="p-1.5 text-slate-400 hover:text-yellow-400 hover:bg-yellow-500/10 rounded-lg transition-colors disabled:opacity-50"
+                        title="Test credentials"
+                      >
+                        <span className={`material-symbols-outlined text-[18px] ${testing === provider.provider_id ? 'animate-spin' : ''}`}>
+                          {testing === provider.provider_id ? 'progress_activity' : 'verified'}
+                        </span>
+                      </button>
                       <button
                         onClick={() => setEditingProvider(provider)}
                         className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"

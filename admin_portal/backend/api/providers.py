@@ -131,3 +131,55 @@ async def delete_provider(provider_id: str):
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
     manager.delete_provider(provider_id)
+
+
+@router.post("/{provider_id}/test")
+async def test_provider(provider_id: str):
+    """Test provider credentials by making a lightweight API call."""
+    manager = get_manager()
+    provider = manager.get_provider(provider_id)
+    if not provider:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
+
+    base_url = "https://bedrock-mantle.us-east-2.api.aws/openai/v1"
+    auth_type = provider.get("auth_type", "")
+
+    try:
+        if auth_type == "bearer_token":
+            token = provider.get("bearer_token", "")
+            if not token:
+                return {"success": False, "message": "No bearer token configured"}
+        elif auth_type == "ak_sk":
+            ak = provider.get("access_key_id", "")
+            sk = provider.get("secret_access_key", "")
+            if not ak or not sk:
+                return {"success": False, "message": "No AK/SK configured"}
+            import boto3
+            from aws_bedrock_token_generator import BedrockTokenGenerator
+            session = boto3.Session(
+                aws_access_key_id=ak,
+                aws_secret_access_key=sk,
+                region_name="us-east-2",
+            )
+            generator = BedrockTokenGenerator(region="us-east-2", session=session)
+            token = generator.generate_token()
+        else:
+            return {"success": False, "message": f"Unknown auth_type: {auth_type}"}
+
+        import httpx
+        resp = httpx.post(
+            f"{base_url}/responses",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"model": "gpt-5.5", "input": "hi", "max_output_tokens": 16},
+            timeout=15.0,
+        )
+        if resp.status_code == 200:
+            return {"success": True, "message": "OK - credentials valid"}
+        elif resp.status_code == 401 or resp.status_code == 403:
+            return {"success": False, "message": f"Auth failed ({resp.status_code})"}
+        elif resp.status_code == 404:
+            return {"success": True, "message": "OK - credentials valid (model not enabled)"}
+        else:
+            return {"success": True, "message": f"OK - credentials valid (status {resp.status_code})"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
