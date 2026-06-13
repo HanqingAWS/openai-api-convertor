@@ -78,3 +78,21 @@ class BedrockAPIError(OpenAIProxyError):
             code=code or "bedrock_error",
             http_status=http_status,
         )
+
+
+class ProviderConfigError(OpenAIProxyError):
+    """A request is bound to a provider that cannot be used.
+
+    Raised when an API key is bound to a provider (provider_id set) but the
+    provider is missing, inactive, or has incomplete credentials. The proxy
+    refuses to silently fall back to the host (default) IAM role — multi-tenant
+    isolation is a hard boundary, so this fails closed instead.
+    """
+
+    def __init__(self, message: str, http_status: int = 502):
+        super().__init__(
+            message=message,
+            error_type="server_error",
+            code="provider_misconfigured",
+            http_status=http_status,
+        )

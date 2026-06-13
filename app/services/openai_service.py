@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import threading
 import time
@@ -11,6 +12,7 @@ from uuid import uuid4
 from openai import OpenAI
 
 from app.core.config import settings
+from app.core.exceptions import ProviderConfigError
 from app.schemas.openai import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -25,6 +27,8 @@ from app.schemas.openai import (
     Usage,
 )
 from app.services.openai_token import OpenAITokenManager, TOKEN_CACHE_SECONDS
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIService:
@@ -70,18 +74,29 @@ class OpenAIService:
 
     def _get_client(self, provider_info: Optional[Dict[str, Any]] = None) -> OpenAI:
         if provider_info:
+            # Fail-closed: a bound provider must yield its own credentials.
+            # Never fall through to the host (token_manager) token.
             auth_type = provider_info.get("auth_type")
-            if auth_type == "bearer_token" and provider_info.get("bearer_token"):
+            name = provider_info.get("name", provider_info.get("provider_id", ""))
+            if auth_type == "bearer_token":
+                if not provider_info.get("bearer_token"):
+                    logger.warning("provider %s bearer_token empty", name)
+                    raise ProviderConfigError(f"Provider '{name}' has no bearer token configured.")
                 return OpenAI(
                     base_url=self.token_manager.get_base_url(),
                     api_key=provider_info["bearer_token"],
                 )
-            if auth_type == "ak_sk" and provider_info.get("access_key_id"):
+            if auth_type == "ak_sk":
+                if not provider_info.get("access_key_id") or not provider_info.get("secret_access_key"):
+                    logger.warning("provider %s ak_sk incomplete", name)
+                    raise ProviderConfigError(f"Provider '{name}' has incomplete AK/SK credentials.")
                 token = self._get_provider_ak_sk_token(provider_info)
                 return OpenAI(
                     base_url=self.token_manager.get_base_url(),
                     api_key=token,
                 )
+            logger.warning("provider %s unknown auth_type %r", name, auth_type)
+            raise ProviderConfigError(f"Provider '{name}' has unknown auth_type '{auth_type}'.")
         return OpenAI(
             base_url=self.token_manager.get_base_url(),
             api_key=self.token_manager.get_api_key(),
@@ -277,12 +292,13 @@ class OpenAIService:
             return client.responses.create(**kwargs)
         except AuthenticationError:
             if provider_info:
-                if provider_info.get("auth_type") == "bearer_token":
-                    raise
+                # Bound provider: only ak_sk can refresh; never fall back to host token.
                 if provider_info.get("auth_type") == "ak_sk":
                     self._invalidate_provider_token(provider_info)
                     client = self._get_client(provider_info)
                     return client.responses.create(**kwargs)
+                raise
+            # Unbound key: refresh the host token and retry.
             self.token_manager.invalidate_token()
             client = self._get_client(provider_info)
             return client.responses.create(**kwargs)
@@ -399,12 +415,13 @@ class OpenAIService:
                     stream = client.responses.create(**kwargs)
                 except AuthenticationError:
                     if provider_info:
-                        if provider_info.get("auth_type") == "bearer_token":
-                            raise
+                        # Bound provider: only ak_sk can refresh; never fall back to host token.
                         if provider_info.get("auth_type") == "ak_sk":
                             self._invalidate_provider_token(provider_info)
                             client = self._get_client(provider_info)
                             stream = client.responses.create(**kwargs)
+                        else:
+                            raise
                     else:
                         self.token_manager.invalidate_token()
                         client = self._get_client(provider_info)

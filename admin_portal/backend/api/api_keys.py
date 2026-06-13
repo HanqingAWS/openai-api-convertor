@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.db.dynamodb import DynamoDBClient, APIKeyManager, UsageTracker, UsageStatsManager
+from app.db.dynamodb import DynamoDBClient, APIKeyManager, ProviderManager, UsageTracker, UsageStatsManager
 from admin_portal.backend.schemas.api_key import (
     ApiKeyCreate,
     ApiKeyUpdate,
@@ -22,6 +22,18 @@ def get_managers():
     """Get DynamoDB managers."""
     db_client = DynamoDBClient()
     return APIKeyManager(db_client), UsageTracker(db_client), UsageStatsManager(db_client)
+
+
+def _validate_provider_id(provider_id: Optional[str]) -> None:
+    """Reject binding to a non-existent provider. Empty = unbound (allowed)."""
+    if not provider_id:
+        return
+    pm = ProviderManager(DynamoDBClient())
+    if not pm.get_provider(provider_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"provider_id '{provider_id}' does not exist",
+        )
 
 
 @router.get("", response_model=ApiKeyListResponse)
@@ -113,6 +125,8 @@ async def create_api_key(request: ApiKeyCreate):
     """
     api_key_manager, _, _ = get_managers()
 
+    _validate_provider_id(request.provider_id)
+
     new_key = api_key_manager.create_api_key(
         user_id=request.user_id,
         name=request.name,
@@ -151,6 +165,9 @@ async def update_api_key(api_key: str, request: ApiKeyUpdate):
 
     # Update the key
     update_data = request.model_dump(exclude_none=True)
+    # provider_id == "" is an explicit unbind (allowed); a non-empty value must exist.
+    if update_data.get("provider_id"):
+        _validate_provider_id(update_data["provider_id"])
     if update_data:
         success = api_key_manager.update_api_key(api_key, **update_data)
         if not success:

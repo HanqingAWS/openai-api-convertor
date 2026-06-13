@@ -29,6 +29,7 @@ def _to_response(item: dict) -> ProviderResponse:
         aws_region=item.get("aws_region", ""),
         auth_type=item.get("auth_type", ""),
         has_access_key=bool(item.get("access_key_id")),
+        has_secret_access_key=bool(item.get("secret_access_key")),
         has_bearer_token=bool(item.get("bearer_token")),
         endpoint_url=item.get("endpoint_url"),
         is_active=item.get("is_active", True),
@@ -104,11 +105,15 @@ async def update_provider(provider_id: str, request: ProviderUpdate):
                 detail="auth_type must be 'ak_sk' or 'bearer_token'",
             )
         update_fields["auth_type"] = request.auth_type
-    if request.access_key_id is not None:
+    # Credentials use truthiness (not `is not None`): an empty string means
+    # "leave current value unchanged" (matches the frontend's "leave blank to
+    # keep current"), so editing a provider's name never wipes its stored
+    # secret — which would have silently broken auth and fallen back to host.
+    if request.access_key_id:
         update_fields["access_key_id"] = request.access_key_id
-    if request.secret_access_key is not None:
+    if request.secret_access_key:
         update_fields["secret_access_key"] = request.secret_access_key
-    if request.bearer_token is not None:
+    if request.bearer_token:
         update_fields["bearer_token"] = request.bearer_token
     if request.endpoint_url is not None:
         update_fields["endpoint_url"] = request.endpoint_url

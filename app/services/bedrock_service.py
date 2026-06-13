@@ -1,6 +1,7 @@
 """Bedrock service for invoking Claude models."""
 import asyncio
 import json
+import logging
 import threading
 from typing import Any, AsyncGenerator, Dict, Optional
 from uuid import uuid4
@@ -9,10 +10,12 @@ import boto3
 from botocore.config import Config
 
 from app.core.config import settings
-from app.core.exceptions import BedrockAPIError
+from app.core.exceptions import BedrockAPIError, InvalidRequestError, OpenAIProxyError, ProviderConfigError
 from app.converters.openai_to_bedrock import OpenAIToBedrockConverter
 from app.converters.bedrock_to_openai import BedrockToOpenAIConverter
 from app.schemas.openai import ChatCompletionRequest, ChatCompletionResponse
+
+logger = logging.getLogger(__name__)
 
 
 class BedrockService:
@@ -73,9 +76,16 @@ class BedrockService:
             "region_name": provider_info.get("aws_region", settings.aws_region),
             "config": config,
         }
-        if provider_info.get("access_key_id") and provider_info.get("secret_access_key"):
-            kwargs["aws_access_key_id"] = provider_info["access_key_id"]
-            kwargs["aws_secret_access_key"] = provider_info["secret_access_key"]
+        # Fail-closed: both AK and SK are required. Never build a credential-less
+        # client (boto3 would silently fall back to the host ECS task role).
+        if not provider_info.get("access_key_id") or not provider_info.get("secret_access_key"):
+            logger.warning("provider %s has incomplete ak_sk credentials", provider_id)
+            raise ProviderConfigError(
+                f"Provider '{provider_info.get('name', provider_id)}' has incomplete AK/SK credentials "
+                "(access_key_id and secret_access_key are both required); refusing host fallback."
+            )
+        kwargs["aws_access_key_id"] = provider_info["access_key_id"]
+        kwargs["aws_secret_access_key"] = provider_info["secret_access_key"]
         if provider_info.get("endpoint_url"):
             kwargs["endpoint_url"] = provider_info["endpoint_url"]
 
@@ -102,7 +112,19 @@ class BedrockService:
         try:
             bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
             model_id = bedrock_request.pop("modelId")
-            if provider_info and provider_info.get("auth_type") == "ak_sk":
+            # Fail-closed: a bound provider must be ak_sk for Converse; never fall
+            # back to the host role when a provider is bound.
+            if provider_info:
+                if provider_info.get("auth_type") != "ak_sk":
+                    logger.warning(
+                        "provider %s auth_type %r cannot serve Claude/Converse",
+                        provider_info.get("provider_id"), provider_info.get("auth_type"),
+                    )
+                    raise InvalidRequestError(
+                        f"Provider '{provider_info.get('name')}' uses "
+                        f"'{provider_info.get('auth_type')}', which cannot authenticate AWS Bedrock "
+                        "Converse (Claude). Use an AK/SK provider, or an OpenAI model."
+                    )
                 client = self._get_client_for_provider(provider_info)
             else:
                 client = self._get_client_for_model(model_id)
@@ -116,6 +138,9 @@ class BedrockService:
                 cache_usage,
             )
 
+        except OpenAIProxyError:
+            # Fail-closed provider errors keep their own status + message.
+            raise
         except self.client.exceptions.ValidationException as e:
             raise BedrockAPIError(str(e), code="validation_error", http_status=400)
         except self.client.exceptions.ThrottlingException as e:
@@ -155,7 +180,18 @@ class BedrockService:
             try:
                 bedrock_request = self.openai_to_bedrock.convert_request(request, cache_ttl=cache_ttl)
                 model_id = bedrock_request.pop("modelId")
-                if provider_info and provider_info.get("auth_type") == "ak_sk":
+                # Fail-closed: a bound provider must be ak_sk for Converse.
+                if provider_info:
+                    if provider_info.get("auth_type") != "ak_sk":
+                        logger.warning(
+                            "provider %s auth_type %r cannot serve Claude/Converse (stream)",
+                            provider_info.get("provider_id"), provider_info.get("auth_type"),
+                        )
+                        raise InvalidRequestError(
+                            f"Provider '{provider_info.get('name')}' uses "
+                            f"'{provider_info.get('auth_type')}', which cannot authenticate AWS Bedrock "
+                            "Converse (Claude). Use an AK/SK provider, or an OpenAI model."
+                        )
                     client = self._get_client_for_provider(provider_info)
                 else:
                     client = self._get_client_for_model(model_id)

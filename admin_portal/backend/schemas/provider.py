@@ -30,6 +30,7 @@ class ProviderResponse(BaseModel):
     aws_region: str
     auth_type: str
     has_access_key: bool = False
+    has_secret_access_key: bool = False
     has_bearer_token: bool = False
     endpoint_url: Optional[str] = None
     is_active: bool = True

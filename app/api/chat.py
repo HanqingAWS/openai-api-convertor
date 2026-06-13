@@ -1,5 +1,6 @@
 """Chat completions API endpoint."""
 import json
+import logging
 import time
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -8,12 +9,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.config import settings
+from app.core.exceptions import InvalidRequestError, OpenAIProxyError, ProviderConfigError
 from app.db.dynamodb import UsageTracker, ProviderManager
 from app.middleware.auth import get_api_key_info
 from app.middleware.rate_limit import check_rate_limit
 from app.schemas.openai import ChatCompletionRequest, ChatCompletionResponse
 from app.services.bedrock_service import BedrockService
 from app.services.openai_service import OpenAIService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Chat"])
 
@@ -40,18 +44,83 @@ def get_usage_tracker(request: Request) -> Optional[UsageTracker]:
 
 
 def resolve_provider(api_key_info: dict, request: Request) -> Optional[Dict[str, Any]]:
-    """Resolve provider credentials from api_key_info.provider_id."""
+    """Resolve provider credentials from api_key_info.provider_id.
+
+    Fail-closed: an empty provider_id means the key is unbound (host IAM role is
+    used by design). But once a provider_id IS set, any failure to resolve a
+    usable provider raises ProviderConfigError instead of silently falling back
+    to the host account — multi-tenant isolation is a hard boundary.
+    """
     provider_id = api_key_info.get("provider_id", "")
     if not provider_id:
-        return None
+        return None  # unbound key — host IAM role by design
+
     dynamodb_client = getattr(request.app.state, "dynamodb_client", None)
     if not dynamodb_client:
-        return None
+        logger.warning("provider %s bound but provider store unavailable", provider_id)
+        raise ProviderConfigError(
+            f"API key is bound to provider '{provider_id}' but the provider store is unavailable; "
+            "refusing to fall back to host credentials."
+        )
+
     manager = ProviderManager(dynamodb_client)
     provider = manager.get_provider(provider_id)
-    if not provider or not provider.get("is_active", False):
-        return None
+    if not provider:
+        logger.warning("bound provider %s not found", provider_id)
+        raise ProviderConfigError(
+            f"API key is bound to provider '{provider_id}' but it no longer exists; "
+            "refusing to fall back to host credentials."
+        )
+    if not provider.get("is_active", False):
+        logger.warning("bound provider %s is inactive", provider_id)
+        raise ProviderConfigError(
+            f"API key is bound to provider '{provider.get('name', provider_id)}' but it is inactive; "
+            "refusing to fall back to host credentials."
+        )
     return provider
+
+
+def validate_provider_for_model(provider_info: Optional[Dict[str, Any]], resolved_model_id: str) -> None:
+    """Fail-closed check that a bound provider can actually serve this model.
+
+    Covers BOTH paths: Claude (Bedrock Converse, needs ak_sk) and OpenAI
+    (Bedrock Mantle, accepts bearer_token or ak_sk-derived token). Raises
+    rather than letting the request silently run on host credentials.
+    """
+    if not provider_info:
+        return  # unbound — host role by design
+
+    auth_type = provider_info.get("auth_type", "")
+    name = provider_info.get("name", provider_info.get("provider_id", ""))
+    ak = provider_info.get("access_key_id")
+    sk = provider_info.get("secret_access_key")
+    bearer = provider_info.get("bearer_token")
+
+    if is_openai_model(resolved_model_id):
+        # OpenAI/Mantle path: bearer_token used directly, or ak_sk → short-lived token
+        if auth_type == "bearer_token":
+            if not bearer:
+                logger.warning("provider %s bearer_token empty", name)
+                raise ProviderConfigError(f"Provider '{name}' has no bearer token configured.")
+        elif auth_type == "ak_sk":
+            if not ak or not sk:
+                logger.warning("provider %s ak_sk incomplete", name)
+                raise ProviderConfigError(f"Provider '{name}' has incomplete AK/SK credentials.")
+        else:
+            logger.warning("provider %s unknown auth_type %r", name, auth_type)
+            raise ProviderConfigError(f"Provider '{name}' has unknown auth_type '{auth_type}'.")
+        return
+
+    # Claude / Bedrock Converse path: only ak_sk can authenticate boto3
+    if auth_type != "ak_sk":
+        logger.warning("provider %s auth_type %r cannot serve Claude", name, auth_type)
+        raise InvalidRequestError(
+            f"Provider '{name}' uses '{auth_type}', which cannot authenticate AWS Bedrock "
+            "Converse (Claude models). Bind an AK/SK provider, or use an OpenAI model."
+        )
+    if not ak or not sk:
+        logger.warning("provider %s ak_sk incomplete (claude)", name)
+        raise ProviderConfigError(f"Provider '{name}' has incomplete AK/SK credentials.")
 
 
 def resolve_cache_ttl(request_data: ChatCompletionRequest, api_key_info: dict) -> Optional[str]:
@@ -94,11 +163,15 @@ async def create_chat_completion(
     # Store api_key_info in request state for rate limiting
     request.state.api_key_info = api_key_info
 
-    # Resolve provider credentials (if API key is bound to a provider)
+    # Resolve provider credentials (if API key is bound to a provider).
+    # Fail-closed: raises if a bound provider is missing/inactive.
     provider_info = resolve_provider(api_key_info, request)
 
     # Resolve model ID to detect OpenAI vs Claude
     resolved_model_id = bedrock_service.resolve_model_id(request_data.model)
+
+    # Fail-closed: a bound provider must be able to serve this model (both paths)
+    validate_provider_for_model(provider_info, resolved_model_id)
 
     # Route to OpenAI service if model is an OpenAI model
     if is_openai_model(resolved_model_id):
@@ -158,6 +231,10 @@ async def create_chat_completion(
             return JSONResponse(content=response.model_dump(exclude_none=True))
 
     except HTTPException:
+        raise
+    except OpenAIProxyError:
+        # Fail-closed provider/validation errors carry their own status + message;
+        # let the global OpenAIProxyError handler render them, don't mask as 500.
         raise
     except Exception as e:
         # Record failed usage
@@ -293,6 +370,9 @@ async def _handle_openai_request(
 
             return JSONResponse(content=response.model_dump(exclude_none=True))
 
+    except OpenAIProxyError:
+        # Fail-closed provider errors keep their own status + message.
+        raise
     except Exception as e:
         if usage_tracker:
             usage_tracker.record_usage(

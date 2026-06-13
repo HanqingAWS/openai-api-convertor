@@ -328,6 +328,17 @@ export default function ProvidersPage() {
                     }`}>
                       {provider.auth_type === 'ak_sk' ? 'AK/SK' : 'Bearer Token'}
                     </span>
+                    {(provider.auth_type === 'ak_sk'
+                      ? (!provider.has_access_key || !provider.has_secret_access_key)
+                      : !provider.has_bearer_token) && (
+                      <span
+                        className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-500/10 text-red-400"
+                        title="Credentials incomplete — requests bound to this provider will fail (fail-closed, no host fallback)"
+                      >
+                        <span className="material-symbols-outlined text-[14px] mr-0.5">warning</span>
+                        凭证不全
+                      </span>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <button
