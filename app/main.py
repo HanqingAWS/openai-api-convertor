@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import chat, models, health
+from app.api import chat, models, health, responses
 from app.core.config import settings
 from app.core.exceptions import OpenAIProxyError
 from app.db.dynamodb import DynamoDBClient, ModelPricingManager
@@ -58,6 +58,7 @@ async def openai_proxy_error_handler(request: Request, exc: OpenAIProxyError):
 # Include routers
 app.include_router(health.router)
 app.include_router(chat.router)
+app.include_router(responses.router)
 app.include_router(models.router)
 
 
