@@ -9,7 +9,6 @@ import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-import httpx
 from openai import OpenAI
 
 from app.core.config import settings
@@ -73,107 +72,35 @@ class OpenAIService:
         provider_id = provider_info.get("provider_id", "")
         self._provider_token_cache.pop(provider_id, None)
 
-    def resolve_endpoint(self, provider_info: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
-        """Resolve (base_url, bearer_token) for the Bedrock Mantle endpoint.
-
-        Fail-closed: a bound provider must yield its OWN token; never fall back
-        to the host token when a provider is bound. Only an unbound request
-        (provider_info is None) uses the host token_manager token.
-        """
-        base_url = self.token_manager.get_base_url()
+    def _get_client(self, provider_info: Optional[Dict[str, Any]] = None) -> OpenAI:
         if provider_info:
+            # Fail-closed: a bound provider must yield its own credentials.
+            # Never fall through to the host (token_manager) token.
             auth_type = provider_info.get("auth_type")
             name = provider_info.get("name", provider_info.get("provider_id", ""))
             if auth_type == "bearer_token":
-                token = provider_info.get("bearer_token")
-                if not token:
+                if not provider_info.get("bearer_token"):
                     logger.warning("provider %s bearer_token empty", name)
                     raise ProviderConfigError(f"Provider '{name}' has no bearer token configured.")
-                return base_url, token
+                return OpenAI(
+                    base_url=self.token_manager.get_base_url(),
+                    api_key=provider_info["bearer_token"],
+                )
             if auth_type == "ak_sk":
                 if not provider_info.get("access_key_id") or not provider_info.get("secret_access_key"):
                     logger.warning("provider %s ak_sk incomplete", name)
                     raise ProviderConfigError(f"Provider '{name}' has incomplete AK/SK credentials.")
-                return base_url, self._get_provider_ak_sk_token(provider_info)
+                token = self._get_provider_ak_sk_token(provider_info)
+                return OpenAI(
+                    base_url=self.token_manager.get_base_url(),
+                    api_key=token,
+                )
             logger.warning("provider %s unknown auth_type %r", name, auth_type)
             raise ProviderConfigError(f"Provider '{name}' has unknown auth_type '{auth_type}'.")
-        return base_url, self.token_manager.get_api_key()
-
-    def _get_client(self, provider_info: Optional[Dict[str, Any]] = None) -> OpenAI:
-        base_url, token = self.resolve_endpoint(provider_info)
-        return OpenAI(base_url=base_url, api_key=token)
-
-    async def responses_passthrough(
-        self, body: Dict[str, Any], provider_info: Optional[Dict[str, Any]] = None
-    ) -> Tuple[int, Any]:
-        """Non-streaming transparent passthrough to Mantle POST /responses.
-
-        The client's proxy key is NOT forwarded — resolve_endpoint yields the
-        provider's (or host's) bearer token and we build a fresh Authorization
-        header. Returns (upstream_status_code, parsed_json_body).
-        """
-        base_url, token = self.resolve_endpoint(provider_info)
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        async with httpx.AsyncClient(timeout=settings.bedrock_timeout) as client:
-            resp = await client.post(f"{base_url}/responses", headers=headers, json=body)
-        try:
-            payload = resp.json()
-        except Exception:
-            payload = {"error": {"message": resp.text or "empty upstream response", "type": "server_error"}}
-        return resp.status_code, payload
-
-    async def responses_passthrough_stream(
-        self, body: Dict[str, Any], provider_info: Optional[Dict[str, Any]] = None
-    ) -> AsyncGenerator[bytes, None]:
-        """Streaming transparent passthrough to Mantle POST /responses.
-
-        Yields raw upstream SSE bytes unchanged, with a 30s ``: ping`` heartbeat
-        so a slow upstream (e.g. reasoning latency) doesn't trip the ALB idle
-        timeout. Same credential handling as responses_passthrough.
-        """
-        queue: asyncio.Queue = asyncio.Queue()
-        _SENTINEL = object()
-
-        async def _pump():
-            try:
-                base_url, token = self.resolve_endpoint(provider_info)
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream",
-                }
-                timeout = httpx.Timeout(settings.bedrock_timeout, read=None)
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    async with client.stream("POST", f"{base_url}/responses", headers=headers, json=body) as resp:
-                        if resp.status_code >= 400:
-                            text = (await resp.aread()).decode("utf-8", "replace")
-                            await queue.put(
-                                f"data: {json.dumps({'error': {'message': text, 'status': resp.status_code}})}\n\n".encode()
-                            )
-                        else:
-                            async for chunk in resp.aiter_bytes():
-                                if chunk:
-                                    await queue.put(chunk)
-            except Exception as e:
-                await queue.put(
-                    f"data: {json.dumps({'error': {'message': str(e), 'type': 'server_error'}})}\n\n".encode()
-                )
-            finally:
-                await queue.put(_SENTINEL)
-
-        task = asyncio.create_task(_pump())
-        try:
-            while True:
-                try:
-                    item = await asyncio.wait_for(queue.get(), timeout=30.0)
-                except asyncio.TimeoutError:
-                    yield b": ping\n\n"
-                    continue
-                if item is _SENTINEL:
-                    break
-                yield item
-        finally:
-            task.cancel()
+        return OpenAI(
+            base_url=self.token_manager.get_base_url(),
+            api_key=self.token_manager.get_api_key(),
+        )
 
     @staticmethod
     def _part_field(part: Any, name: str, default: Any = None) -> Any:
