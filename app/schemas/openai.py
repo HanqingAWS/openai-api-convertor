@@ -94,8 +94,11 @@ class ChatCompletionRequest(BaseModel):
     messages: List[Message]
     max_tokens: Optional[int] = Field(default=4096, ge=1)
     max_completion_tokens: Optional[int] = Field(default=None, ge=1)
-    temperature: Optional[float] = Field(default=1.0, ge=0.0, le=2.0)
-    top_p: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
+    # Default None, not 1.0: a default value is indistinguishable from a client
+    # explicitly asking for it, and some models reject the field outright.
+    # Omitting it lets Bedrock apply the model's own default (1.0 for Claude).
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     n: Optional[int] = Field(default=1, ge=1, le=1)  # Only support n=1
     stream: Optional[bool] = False
     stop: Optional[Union[str, List[str]]] = None

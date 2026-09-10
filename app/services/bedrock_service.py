@@ -280,7 +280,9 @@ class BedrockService:
 
     def list_models(self) -> list[Dict[str, Any]]:
         """List available models (default + custom mappings)."""
-        model_ids = set(settings.default_model_mapping.keys())
+        # alias -> resolved Bedrock ID, so owner/capabilities reflect what each alias
+        # actually resolves to. Built in one pass instead of resolving per alias.
+        resolved = dict(settings.default_model_mapping)
 
         # Include custom mappings from DynamoDB
         if self.openai_to_bedrock.dynamodb_client:
@@ -288,23 +290,29 @@ class BedrockService:
                 from app.db.dynamodb import ModelMappingManager
                 manager = ModelMappingManager(self.openai_to_bedrock.dynamodb_client)
                 for m in manager.list_mappings():
-                    model_ids.add(m.get("openai_model_id", ""))
-                model_ids.discard("")
+                    alias = m.get("openai_model_id", "")
+                    if alias:
+                        resolved[alias] = m.get("bedrock_model_id", "") or alias
             except Exception:
                 pass
 
         models = []
-        for model_id in sorted(model_ids):
+        for model_id in sorted(resolved):
+            bedrock_id = resolved.get(model_id) or model_id
+            # An alias can be named anything, so judge by the resolved Bedrock ID.
+            is_openai = self.openai_to_bedrock._is_openai_family(bedrock_id)
             models.append({
                 "id": model_id,
                 "object": "model",
                 "created": 1700000000,
-                "owned_by": "anthropic",
+                "owned_by": "openai" if is_openai else "anthropic",
                 "capabilities": {
                     "vision": settings.enable_vision,
                     "tool_use": settings.enable_tool_use,
                     "function_calling": settings.enable_tool_use,
-                    "extended_thinking": settings.enable_extended_thinking,
+                    # GPT models reason on their own; the Anthropic thinking block is
+                    # dropped for them, so don't advertise it.
+                    "extended_thinking": settings.enable_extended_thinking and not is_openai,
                     "streaming": True,
                 },
             })

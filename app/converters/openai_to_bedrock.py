@@ -21,6 +21,18 @@ CACHING_UNSUPPORTED_MODELS = {
     "us.anthropic.claude-3-5-haiku-20241022-v1:0",
 }
 
+# Substrings identifying OpenAI/GPT models by their resolved Bedrock ID. These now serve
+# over Converse as well as the Mantle endpoint (e.g. global.openai.gpt-6-astra), so the
+# Converse converter must not hand them Anthropic-shaped fields.
+#
+# Matched against the RESOLVED Bedrock ID only — never the client-facing alias, which can
+# be named anything (a GPT model mapped as "claude-astra", or a Claude model behind an
+# alias containing "gpt").
+OPENAI_FAMILY_MODEL_MARKERS = {
+    "openai.",
+    "gpt-",
+}
+
 # Per-model minimum cacheable token thresholds (Bedrock actual, not documented)
 MODEL_CACHE_MIN_TOKENS = {
     "claude-sonnet-4-5": 1024,
@@ -90,6 +102,11 @@ class OpenAIToBedrockConverter:
         elif request.reasoning_effort and settings.enable_extended_thinking:
             budget = REASONING_EFFORT_MAP.get(request.reasoning_effort, 10000)
             thinking_config = {"type": "enabled", "budget_tokens": budget}
+
+        # Drop it entirely for GPT models: the thinking block is Anthropic-shaped and
+        # would be rejected. They reason on their own without it.
+        if thinking_config and not self._model_supports_anthropic_thinking(self._resolved_model_id or ""):
+            thinking_config = None
 
         if thinking_config:
             additional = bedrock_request.get("additionalModelRequestFields", {})
@@ -250,11 +267,14 @@ class OpenAIToBedrockConverter:
         max_tok = request.max_completion_tokens or request.max_tokens
         if max_tok:
             config["maxTokens"] = max_tok
-        if request.temperature is not None:
-            config["temperature"] = min(request.temperature, 1.0)  # Bedrock max is 1.0
-        elif request.top_p is not None:
-            # Claude doesn't allow both temperature and top_p
-            config["topP"] = request.top_p
+        # Only forward sampling params the client actually sent, and only to models
+        # that accept them — otherwise Bedrock rejects the whole request.
+        if self._model_supports_sampling_params(self._resolved_model_id or ""):
+            if request.temperature is not None:
+                config["temperature"] = min(request.temperature, 1.0)  # Bedrock max is 1.0
+            elif request.top_p is not None:
+                # Claude doesn't allow both temperature and top_p
+                config["topP"] = request.top_p
         if request.stop:
             stops = request.stop if isinstance(request.stop, list) else [request.stop]
             config["stopSequences"] = stops[:4]  # Bedrock max 4
@@ -336,8 +356,35 @@ class OpenAIToBedrockConverter:
         except Exception:
             return {}
 
+    def _is_openai_family(self, bedrock_model: str) -> bool:
+        """Whether the resolved Bedrock ID names an OpenAI/GPT model."""
+        model = (bedrock_model or "").lower()
+        return any(marker in model for marker in OPENAI_FAMILY_MODEL_MARKERS)
+
+    def _model_supports_sampling_params(self, bedrock_model: str) -> bool:
+        """GPT models are reasoning-only: "This model doesn't support the temperature field"."""
+        return not self._is_openai_family(bedrock_model)
+
+    def _model_supports_anthropic_thinking(self, bedrock_model: str) -> bool:
+        """additionalModelRequestFields.thinking is Anthropic-specific.
+
+        GPT models reason by default and take no Anthropic thinking block, so
+        reasoning_effort / thinking is dropped for them rather than translated —
+        the equivalent Converse field for GPT reasoning effort (if any) is unknown.
+        """
+        return not self._is_openai_family(bedrock_model)
+
     def _model_supports_caching(self, openai_model: str, bedrock_model: str) -> bool:
-        """Check if the model supports prompt caching."""
+        """Check if the model accepts an explicit Bedrock cachePoint block.
+
+        GPT models reject one outright ("AccessDeniedException: You invoked an
+        unsupported model or your request did not allow prompt caching") but cache
+        automatically without it — verified against global.openai.gpt-6-astra, where
+        a repeated prefix reports cache_read hits with no cachePoint sent. So skipping
+        injection for them loses no caching.
+        """
+        if self._is_openai_family(bedrock_model):
+            return False
         return (
             openai_model not in CACHING_UNSUPPORTED_MODELS
             and bedrock_model not in CACHING_UNSUPPORTED_MODELS
