@@ -222,6 +222,22 @@ boot to configure Amplify.
 - `temperature`/`top_p` must stay `Optional[...] = None` in the schema: a non-None default makes
   "client omitted it" indistinguishable from "client asked for it", so the proxy invents a value and
   forwards it upstream. The old `1.0` default also shadowed `top_p` entirely (the `elif` branch).
+- **TODO (deferred 2026-09-10, "works for now"): a client sending an explicit non-1 sampling value
+  still fails on the newest models.** Verified in prod:
+
+  | Model | Path | Error on `temperature=0.7` / `top_p=0.9` |
+  |---|---|---|
+  | `claude-sonnet-5`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-fable-5` | Converse | 400 `` `temperature` is deprecated for this model `` |
+  | `openai.gpt-5.6-*` | Mantle | 400 `unsupported_parameter` (converted to a 500) |
+
+  These accept `temperature=1.0` fine — they reject only *other* values, so the old `1.0` default
+  masked this and it is **not** a regression. It matters because many OpenAI clients send
+  `temperature=0.7` by default. Two ways to close it: extend the marker set (simple, but that list
+  has already proven too narrow twice, and models are added at runtime via the Admin Portal), or
+  catch the `deprecated` / `unsupported_parameter` ValidationException, retry once without sampling
+  params, and cache that per model (self-healing for future models; the stream path can retry too
+  since the error is raised by `converse_stream()` before any chunk is yielded). The Mantle path has
+  the same gap in `openai_service._build_responses_kwargs`, which forwards `temperature != 1.0`.
 - `gpt-5.x` on Mantle rejects `temperature` unless it is 1 — the OpenAI path only forwards
   `temperature` when it differs from 1, and passthrough surfaces the upstream 400 rather than
   stripping the parameter. Small `max_output_tokens` (< 64) often gets consumed by reasoning tokens
