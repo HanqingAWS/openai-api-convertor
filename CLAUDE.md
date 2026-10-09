@@ -194,11 +194,26 @@ boot to configure Amplify.
 
 - Model IDs are written without a version suffix (`claude-sonnet-4-6`, not
   `claude-sonnet-4-6-20250929`). Ask for exact Bedrock model IDs rather than guessing them.
-- Extended thinking forces `temperature=1`, drops `top_p`, and raises `max_tokens` above
-  `budget_tokens` (`convert_request`). `reasoning_effort` low/medium/high → 1024/10000/32000 budget
-  for Claude, or native `reasoning.effort` for OpenAI models.
-- **GPT models can now be served over Converse, not only Mantle** (e.g.
-  `global.openai.gpt-6-astra`). Two consequences:
+- **Extended thinking has two shapes, and current models only take the new one.** sonnet-5,
+  opus-4-7, opus-4-8 and fable-5 reject the legacy block with `"thinking.type.enabled" is not
+  supported for this model. Use "thinking.type.adaptive" and "output_config.effort"`. So
+  `reasoning_effort` now emits `{"thinking": {"type": "adaptive"}, "output_config": {"effort": …}}`
+  unconditionally — the previous generation accepts both shapes, so no per-model branch is needed
+  (`_apply_thinking`). Valid efforts are `low`, `medium`, `high`, `xhigh`, `max` (Bedrock's own
+  error text lists them; the schema allows all five, beyond OpenAI's three). The adaptive shape has
+  no `budget_tokens`, so nothing raises `max_tokens` and nothing forces `temperature=1`. A client's
+  explicit `thinking` block is still passed through verbatim — including the legacy shape, which
+  lets a caller target an older model, and which will 400 on a current one by their choice.
+- **Whether a `reasoningContent` block comes back is the model's decision, not a setting.** With
+  adaptive thinking it is non-deterministic per request — measured `effort=low` 3/3, `effort=high`
+  0/3, no-effort 2/3 (`tests/probe_reasoning_block.py`). So never assert that
+  `thinking` / `reasoning_content` is populated; assert it is well-formed when present. The
+  converter's mapping (`reasoningContent.reasoningText.text` → both fields) is correct and unchanged.
+- **GPT models are served over Converse, not Mantle.** As of 2026-10-09 the default mapping points
+  every GPT alias at a `global.openai.*` CRIS profile, so nothing in it routes to Mantle; the Mantle
+  code path still exists and still works, but only a bare `openai.*` id reaches it. The four
+  supported GPT models are gpt-6-astra, gpt-6.1-sol, gpt-6-sol and gpt-6-luna (verify a new one is
+  available with `aws bedrock list-inference-profiles --region <r>` before mapping it).
   - **Routing is decided by prefix, implicitly.** `is_openai_model()` tests
     `startswith("openai.")`, so `openai.gpt-6-astra` → Mantle but `global.openai.gpt-6-astra` →
     Converse. Whoever adds a mapping picks the endpoint via that prefix, probably without knowing.
@@ -222,22 +237,19 @@ boot to configure Amplify.
 - `temperature`/`top_p` must stay `Optional[...] = None` in the schema: a non-None default makes
   "client omitted it" indistinguishable from "client asked for it", so the proxy invents a value and
   forwards it upstream. The old `1.0` default also shadowed `top_p` entirely (the `elif` branch).
-- **TODO (deferred 2026-09-10, "works for now"): a client sending an explicit non-1 sampling value
-  still fails on the newest models.** Verified in prod:
-
-  | Model | Path | Error on `temperature=0.7` / `top_p=0.9` |
-  |---|---|---|
-  | `claude-sonnet-5`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-fable-5` | Converse | 400 `` `temperature` is deprecated for this model `` |
-  | `openai.gpt-5.6-*` | Mantle | 400 `unsupported_parameter` (converted to a 500) |
-
-  These accept `temperature=1.0` fine — they reject only *other* values, so the old `1.0` default
-  masked this and it is **not** a regression. It matters because many OpenAI clients send
-  `temperature=0.7` by default. Two ways to close it: extend the marker set (simple, but that list
-  has already proven too narrow twice, and models are added at runtime via the Admin Portal), or
-  catch the `deprecated` / `unsupported_parameter` ValidationException, retry once without sampling
-  params, and cache that per model (self-healing for future models; the stream path can retry too
-  since the error is raised by `converse_stream()` before any chunk is yielded). The Mantle path has
-  the same gap in `openai_service._build_responses_kwargs`, which forwards `temperature != 1.0`.
+- **Current Claude models deprecated `temperature` / `top_p`** (`` `temperature` is deprecated for
+  this model ``). They tolerate `temperature=1.0` — the no-op default — but reject any other value,
+  and reject `top_p` outright. Measured 2026-10-09 across sonnet-5 / opus-4-7 / opus-4-8 /
+  fable-5; sonnet-4-6 and older still accept both. So `_model_supports_sampling_params` now gates
+  on two families: `OPENAI_FAMILY_MODEL_MARKERS` (GPT, reject the field entirely) and
+  `SAMPLING_DEPRECATED_MODEL_MARKERS` (current Claude). This closed the deferred TODO from
+  2026-09-10 — a client sending the common `temperature=0.7` used to get a 400.
+  - That marker list has now been too narrow three times. If it needs a fourth entry, prefer the
+    self-healing fix instead: catch the `deprecated` / `unsupported_parameter` ValidationException,
+    retry once without sampling params, and cache the verdict per model. The stream path can retry
+    too, since the error is raised by `converse_stream()` before any chunk is yielded. The Mantle
+    path has the same gap in `openai_service._build_responses_kwargs` (forwards
+    `temperature != 1.0`), which only matters if a model is mapped back to a bare `openai.*` id.
 - `gpt-5.x` on Mantle rejects `temperature` unless it is 1 — the OpenAI path only forwards
   `temperature` when it differs from 1, and passthrough surfaces the upstream 400 rather than
   stripping the parameter. Small `max_output_tokens` (< 64) often gets consumed by reasoning tokens
@@ -249,6 +261,11 @@ boot to configure Amplify.
   resolves `import app` to the stale site-packages copy — tests then "fail" against code you already
   fixed, or pass against code you didn't. Always
   `docker cp <test> <container>:/app/tests/ && docker exec -w /app <container> python tests/<test>`.
+  **`-w /app` alone is not enough**: Python puts the *script's* directory first on `sys.path`, so a
+  script at `/app/tests/x.py` still resolves `import app` to site-packages even with cwd `/app`
+  (only `python -c` honours cwd). Every probe/test script that imports `app` therefore starts with
+  `sys.path.insert(0, <repo root>)` — keep that line when adding one. Symptom: the script reports
+  the *previous* generation's data (e.g. a 7-entry default mapping after you changed it to 9).
 - `dynamodb-local` runs **in-memory** (`-inMemory`): a container restart wipes every table. Symptom
   is `validate_api_key` returning `None` so every key degrades to `anonymous` (silently testing the
   host path instead of the provider path), plus `Could not connect to the endpoint URL` in logs. Fix:

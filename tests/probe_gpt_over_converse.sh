@@ -96,5 +96,8 @@ PY
 )"
 
 echo
-echo "7. control: a Claude model must still accept everything"
-probe "claude + temperature + reasoning" "{\"model\":\"claude-sonnet-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the single word: ok\"}],\"max_tokens\":300,\"temperature\":0.7}"
+# Control: a Claude model must still accept sampling params. Uses an env override so
+# this keeps working as the default mapping moves to newer model generations.
+CLAUDE_MODEL="${CLAUDE_MODEL:-claude-sonnet-5}"
+echo "7. control: a Claude model ($CLAUDE_MODEL) must still accept temperature"
+probe "claude + temperature=1" "{\"model\":\"$CLAUDE_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the single word: ok\"}],\"max_tokens\":300,\"temperature\":1}"

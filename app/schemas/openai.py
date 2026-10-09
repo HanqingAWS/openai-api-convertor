@@ -112,7 +112,10 @@ class ChatCompletionRequest(BaseModel):
     # Stream options
     stream_options: Optional[StreamOptions] = None
     # Reasoning effort (OpenAI standard)
-    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None
+    # low/medium/high are OpenAI's own values; xhigh and max are additionally
+    # accepted by current Claude models via output_config.effort on Converse
+    # (Bedrock: "expected one of `low`, `medium`, `high`, `xhigh`, `max`").
+    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = None
     # Extended thinking (custom extension)
     thinking: Optional[Dict[str, Any]] = Field(default=None, alias="thinking")
     # Prompt caching control

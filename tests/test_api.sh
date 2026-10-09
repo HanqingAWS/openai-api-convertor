@@ -15,7 +15,7 @@ set -euo pipefail
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 API_KEY="${API_KEY:-test-key}"
-MODEL="${TEST_MODEL:-claude-sonnet-4-5}"
+MODEL="${TEST_MODEL:-claude-sonnet-5}"
 
 PASS=0
 FAIL=0

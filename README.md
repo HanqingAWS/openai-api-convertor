@@ -24,15 +24,25 @@ OpenAI 兼容的 API 代理，将请求转发到 AWS Bedrock。支持 Claude 模
 
 | 模型 ID | Bedrock 模型 ID | 路由 |
 |---------|----------------|------|
-| claude-opus-4-5 | global.anthropic.claude-opus-4-5-20251101-v1:0 | Converse API |
-| claude-opus-4-6 | global.anthropic.claude-opus-4-6-v1 | Converse API |
-| claude-sonnet-4-5 | global.anthropic.claude-sonnet-4-5-20250929-v1:0 | Converse API |
-| claude-sonnet-4-6 | global.anthropic.claude-sonnet-4-6 | Converse API |
-| claude-haiku-4-5 | global.anthropic.claude-haiku-4-5-20251001-v1:0 | Converse API |
-| openai-gpt-5-5 | openai.gpt-5.5 | Bedrock Mantle |
-| openai-gpt-5-4 | openai.gpt-5.4 | Bedrock Mantle |
+| claude-opus-4-8 | global.anthropic.claude-opus-4-8 | Converse API |
+| claude-opus-4-7 | global.anthropic.claude-opus-4-7 | Converse API |
+| claude-sonnet-5 | global.anthropic.claude-sonnet-5 | Converse API |
+| claude-fable-5 | global.anthropic.claude-fable-5-1 | Converse API |
+| openai.gpt-6-astra | global.openai.gpt-6-astra | Converse API |
+| openai.gpt-6.1-sol | global.openai.gpt-6.1-sol | Converse API |
+| openai.gpt-6-sol | global.openai.gpt-6-sol | Converse API |
+| openai.gpt-6-luna | global.openai.gpt-6-luna | Converse API |
 
-> **路由规则**：Bedrock 模型 ID 以 `openai.` 开头的走 Bedrock Mantle Responses API，其他走 Bedrock Converse API。
+> 以上为内置默认映射，Admin Portal 里配置的自定义映射优先于它。GPT 模型通过 global CRIS
+> 推理配置（`global.openai.*`）调用，与 Claude 一样走 Converse API。
+>
+> **路由规则**：Bedrock 模型 ID 以 `openai.` 开头的走 Bedrock Mantle Responses API，其他（含
+> `global.openai.*`）走 Bedrock Converse API。注意前缀差异决定端点——`openai.gpt-6-sol` 会走
+> Mantle，而 `global.openai.gpt-6-sol` 走 Converse。
+>
+> **GPT 模型的参数差异**（代理已自动处理，客户端无需关心）：这些模型是推理模型，不接受
+> `temperature` / `top_p`，也不接受 Anthropic 的 thinking 块和显式 `cachePoint`；代理会自动剥离。
+> 它们的 prompt caching 由模型隐式提供（约 1024 token 以上自动生效），用量字段照常上报。
 
 ### 添加新模型
 
@@ -40,7 +50,7 @@ OpenAI 兼容的 API 代理，将请求转发到 AWS Bedrock。支持 Claude 模
 
 1. 打开 Admin Portal → **Model Mappings** 页面
 2. 点击 **Add Mapping**
-3. 填写 Anthropic Model ID（OpenAI SDK 使用的名称，如 `claude-sonnet-4-5`）和 Bedrock Model ID（如 `global.anthropic.claude-sonnet-4-5-20250929-v1:0`）
+3. 填写 Anthropic Model ID（OpenAI SDK 使用的名称，如 `claude-sonnet-5`）和 Bedrock Model ID（如 `global.anthropic.claude-sonnet-5`）
 4. 保存后立即生效，无需重启服务
 5. 如需计费，在 **Model Pricing** 页面配置对应模型的输入/输出/缓存价格
 
@@ -129,7 +139,7 @@ curl http://$ALB_DNS/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <master-api-key>" \
   -d '{
-    "model": "claude-sonnet-4-5",
+    "model": "claude-sonnet-5",
     "messages": [{"role": "user", "content": "Hello!"}],
     "max_tokens": 200
   }'
@@ -239,7 +249,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="claude-sonnet-4-5",
+    model="claude-sonnet-5",
     messages=[{"role": "user", "content": "Hello!"}],
     max_tokens=200
 )
@@ -254,7 +264,7 @@ curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-key" \
   -d '{
-    "model": "claude-sonnet-4-5",
+    "model": "claude-sonnet-5",
     "messages": [{"role": "user", "content": "Hello!"}],
     "max_tokens": 200
   }'
@@ -264,7 +274,7 @@ curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-key" \
   -d '{
-    "model": "claude-sonnet-4-5",
+    "model": "claude-sonnet-5",
     "messages": [{"role": "user", "content": "Hello!"}],
     "max_tokens": 200,
     "stream": true
@@ -275,7 +285,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 ```python
 response = client.chat.completions.create(
-    model="claude-sonnet-4-5",
+    model="claude-sonnet-5",
     messages=[{
         "role": "user",
         "content": [
@@ -303,7 +313,7 @@ tools = [{
 }]
 
 response = client.chat.completions.create(
-    model="claude-sonnet-4-5",
+    model="claude-sonnet-5",
     messages=[{"role": "user", "content": "东京天气怎么样？"}],
     tools=tools,
     tool_choice="auto"
@@ -315,7 +325,7 @@ response = client.chat.completions.create(
 ```python
 # 方式一：reasoning_effort（OpenAI 标准，Claude 和 OpenAI 模型都支持）
 response = client.chat.completions.create(
-    model="claude-sonnet-4-6",  # 或 "openai-gpt-5-5"
+    model="claude-sonnet-5",  # 或 "openai.gpt-6.1-sol"
     messages=[{"role": "user", "content": "解决这个复杂问题..."}],
     reasoning_effort="high"  # low / medium / high
 )
@@ -323,7 +333,7 @@ response = client.chat.completions.create(
 
 # 方式二：thinking（Claude-specific，精确控制 budget_tokens）
 response = client.chat.completions.create(
-    model="claude-sonnet-4-5",
+    model="claude-sonnet-5",
     messages=[{"role": "user", "content": "解决这个复杂问题..."}],
     extra_body={
         "thinking": {
@@ -351,7 +361,7 @@ response = client.chat.completions.create(
   "id": "chatcmpl-xxxx",
   "object": "chat.completion",
   "created": 1773646794,
-  "model": "claude-sonnet-4-6",
+  "model": "claude-sonnet-5",
   "choices": [
     {
       "index": 0,
@@ -386,11 +396,11 @@ response = client.chat.completions.create(
 请求需设置 `"stream": true`。每个 chunk 通过 SSE（Server-Sent Events）返回：
 
 ```
-data: {"id":"chatcmpl-xxxx","object":"chat.completion.chunk","created":...,"model":"claude-sonnet-4-6","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}],"usage":null}
+data: {"id":"chatcmpl-xxxx","object":"chat.completion.chunk","created":...,"model":"claude-sonnet-5","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}],"usage":null}
 
-data: {"id":"chatcmpl-xxxx","object":"chat.completion.chunk","created":...,"model":"claude-sonnet-4-6","choices":[{"index":0,"delta":{"content":"Hello!"},"finish_reason":null}],"usage":null}
+data: {"id":"chatcmpl-xxxx","object":"chat.completion.chunk","created":...,"model":"claude-sonnet-5","choices":[{"index":0,"delta":{"content":"Hello!"},"finish_reason":null}],"usage":null}
 
-data: {"id":"chatcmpl-xxxx","object":"chat.completion.chunk","created":...,"model":"claude-sonnet-4-6","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
+data: {"id":"chatcmpl-xxxx","object":"chat.completion.chunk","created":...,"model":"claude-sonnet-5","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
 
 data: [DONE]
 ```
@@ -419,7 +429,7 @@ Prompt caching is **enabled by default**. The proxy automatically inserts cache 
 ```python
 # Automatic caching (default) - no extra config needed
 response = client.chat.completions.create(
-    model="claude-sonnet-4-5",
+    model="claude-sonnet-5",
     messages=[
         {"role": "system", "content": "Very long system prompt..."},
         {"role": "user", "content": "Hello!"},
@@ -429,14 +439,14 @@ response = client.chat.completions.create(
 
 # Specify 1 hour TTL for long-running agent tasks
 response = client.chat.completions.create(
-    model="claude-sonnet-4-5",
+    model="claude-sonnet-5",
     messages=[...],
     extra_body={"cache_ttl": "1h"}
 )
 
 # Disable caching for a single request
 response = client.chat.completions.create(
-    model="claude-sonnet-4-5",
+    model="claude-sonnet-5",
     messages=[...],
     extra_body={"caching": False}
 )
@@ -464,6 +474,10 @@ Bedrock 对不同模型有不同的最小缓存 token 要求，低于阈值的�
 
 | 模型 | 最小缓存 Token 数 |
 |------|-------------------|
+| claude-opus-4-8 | 1,024 |
+| claude-opus-4-7 | 4,096 |
+| claude-sonnet-5 | 1,024 |
+| claude-fable-5 | 1,024 |
 | claude-sonnet-4-5 | 1,024 |
 | claude-sonnet-4-6 | 2,048 |
 | claude-opus-4-5 | 4,096 |
@@ -471,6 +485,13 @@ Bedrock 对不同模型有不同的最小缓存 token 要求，低于阈值的�
 | claude-haiku-4-5 | 2,048 |
 
 环境变量 `PROMPT_CACHE_MIN_TOKENS`（默认 1024）作为未在上表中的模型的回退值。
+
+> 这些阈值 Bedrock 未公开文档，是实测得出的（`tests/probe_cache_threshold.py`，2026-10-09）。
+> 新增模型时建议跑一遍该脚本：阈值配低了不会报错，但缓存点会被 Bedrock 静默忽略——
+> 白付 cache write 费用且永不命中。例如 `claude-opus-4-7` 实测在 ~4050 token 时不缓存、
+> ~4764 token 时缓存，故阈值为 4,096。
+>
+> GPT 模型（`global.openai.*`）不走这套机制：它们拒收显式 `cachePoint`，由模型隐式缓存。
 
 #### Token 估算逻辑
 
@@ -499,7 +520,7 @@ OpenAI 模型（GPT-5-5、GPT-5-4）通过 Bedrock Mantle 的 Responses API 路�
 ```python
 # 使用 OpenAI 模型
 response = client.chat.completions.create(
-    model="openai-gpt-5-5",
+    model="openai.gpt-6.1-sol",
     messages=[{"role": "user", "content": "Hello!"}],
     max_tokens=200
 )
@@ -641,7 +662,7 @@ openai-api-convertor/
 ```bash
 export API_BASE_URL=http://localhost:8000
 export API_KEY=test-key
-export TEST_MODEL=claude-sonnet-4-5
+export TEST_MODEL=claude-sonnet-5
 
 bash tests/test_api.sh
 
@@ -654,7 +675,7 @@ bash tests/test_api.sh test_tool_calling
 ```bash
 export API_BASE_URL=http://localhost:8000
 export API_KEY=test-key
-export TEST_MODEL=claude-sonnet-4-5
+export TEST_MODEL=claude-sonnet-5
 
 python3 tests/test_runner.py
 

@@ -19,8 +19,10 @@ from app.services.openai_service import OpenAIService
 
 
 def _req(**overrides):
+    # The model that matters is the resolved id passed to _build_responses_kwargs
+    # below; this field is only here to satisfy the schema.
     base = dict(
-        model="openai-gpt-5-5",
+        model="openai.gpt-5.6-sol",
         messages=[
             Message(role="system", content="You are a helpful assistant."),
             Message(role="user", content="Hello"),

@@ -68,17 +68,30 @@ class Settings(BaseSettings):
     rate_limit_window: int = Field(default=60, alias="RATE_LIMIT_WINDOW")
 
     # Model Mapping
+    # Fallback only: the DynamoDB model-mapping table takes precedence, so this is
+    # what a fresh deploy (or an emptied local dynamodb-local) resolves against.
+    # Mirrors the current prod mapping as of 2026-10-09.
+    #
+    # Routing note: is_openai_model() tests startswith("openai."), so a bare
+    # "openai.*" id goes to Mantle while "global.openai.*" goes to Converse. The
+    # prefix is what picks the endpoint — see CLAUDE.md.
     default_model_mapping: Dict[str, str] = Field(
         default={
-            "claude-opus-4-5": "global.anthropic.claude-opus-4-5-20251101-v1:0",
-            "claude-opus-4-6": "global.anthropic.claude-opus-4-6-v1",
-            "claude-sonnet-4-5": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
-            "claude-sonnet-4-6": "global.anthropic.claude-sonnet-4-6",
-            "claude-haiku-4-5": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
-            "openai-gpt-5-5": "openai.gpt-5.5",
-            "openai-gpt-5-4": "openai.gpt-5.4",
-            "gpt-5.5": "openai.gpt-5.5",
-            "gpt-5.4": "openai.gpt-5.4",
+            # Claude — Bedrock Converse
+            "claude-opus-4-8": "global.anthropic.claude-opus-4-8",
+            "claude-opus-4-7": "global.anthropic.claude-opus-4-7",
+            "claude-sonnet-5": "global.anthropic.claude-sonnet-5",
+            "claude-fable-5": "global.anthropic.claude-fable-5-1",
+            # GPT — all on Converse via global CRIS inference profiles. The
+            # "global." prefix is what keeps is_openai_model() from routing these
+            # to Mantle; sampling params / thinking / cachePoint are withheld
+            # from them (see _is_openai_family). Verified ACTIVE in
+            # ap-northeast-1 via `aws bedrock list-inference-profiles`.
+            "claude-astra": "global.openai.gpt-6-astra",
+            "openai.gpt-6-astra": "global.openai.gpt-6-astra",
+            "openai.gpt-6.1-sol": "global.openai.gpt-6.1-sol",
+            "openai.gpt-6-sol": "global.openai.gpt-6-sol",
+            "openai.gpt-6-luna": "global.openai.gpt-6-luna",
         },
         alias="DEFAULT_MODEL_MAPPING",
     )

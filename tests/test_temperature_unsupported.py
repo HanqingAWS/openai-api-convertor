@@ -29,7 +29,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.converters.openai_to_bedrock import OpenAIToBedrockConverter
 from app.schemas.openai import ChatCompletionRequest, Message
 
-SONNET = "claude-sonnet-4-5"
+# A model that still ACCEPTS temperature/topP, for the "params are forwarded"
+# cases. Current models (sonnet-5, opus-4-7/4-8, fable-5) deprecated both, so a
+# previous-generation id is needed to exercise the forwarding path.
+SONNET = "claude-sonnet-4-6"
+# A current model, which rejects sampling params and needs adaptive thinking.
+CURRENT_CLAUDE = "claude-sonnet-5"
 # The real Bedrock ID behind the user's "claude-astra" mapping — a GPT-6 model.
 GPT_ASTRA_BEDROCK_ID = "global.openai.gpt-6-astra"
 # Alias as configured in the Admin Portal: a GPT model named "claude-*".
@@ -59,8 +64,14 @@ def convert(mapping=None, cache_ttl=None, **overrides):
     payload.update(overrides)
     request = ChatCompletionRequest(**payload)
     converter = OpenAIToBedrockConverter()
-    if mapping:
-        converter.model_mapping = {**converter.model_mapping, **mapping}
+    # The previous-generation ids used here are no longer in the built-in default
+    # mapping, so register them explicitly rather than relying on pass-through.
+    converter.model_mapping = {
+        **converter.model_mapping,
+        "claude-sonnet-4-6": "global.anthropic.claude-sonnet-4-6",
+        "claude-sonnet-4-5": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        **(mapping or {}),
+    }
     return converter.convert_request(request, cache_ttl=cache_ttl), request
 
 
@@ -106,6 +117,8 @@ def main():
     check("temperature stripped via alias", "temperature" not in cfg, f"got {cfg}")
 
     print("   4c. a Claude model behind a 'gpt'-ish alias must NOT be stripped")
+    # Uses a previous-generation model: current ones deprecated sampling params,
+    # which would strip temperature for a reason unrelated to the alias name.
     req, _ = convert(mapping={"my-gpt-proxy": "global.anthropic.claude-sonnet-4-6"},
                      model="my-gpt-proxy", temperature=0.4)
     check("alias name doesn't trigger stripping",
@@ -131,7 +144,9 @@ def main():
     print("6. long prompt on a GPT model -> no cachePoint block (it rejects them)")
     long_system = (
         "You are a meticulous assistant. "
-        + "Always cite your reasoning and never invent facts you cannot support. " * 80
+        # Long enough to clear the highest threshold in MODEL_CACHE_MIN_TOKENS
+        # (4096 for opus), so this stays valid whichever model SONNET points at.
+        + "Always cite your reasoning and never invent facts you cannot support. " * 260
     )
     long_msgs = [
         Message(role="system", content=long_system),
@@ -156,17 +171,46 @@ def main():
     check("cachePoint still injected for claude", has_cache_point(req),
           "cachePoint missing — check the estimated token threshold")
 
-    print("7. reasoning on a normal Claude model -> unchanged behavior")
-    req, _ = convert(model=SONNET, reasoning_effort="low")
+    print("7. reasoning_effort on Claude -> adaptive thinking + output_config.effort")
+    # Current models reject thinking.type=enabled:
+    #   'Use "thinking.type.adaptive" and "output_config.effort" ...'
+    for effort in ("low", "medium", "high", "xhigh", "max"):
+        req, _ = convert(model=CURRENT_CLAUDE, reasoning_effort=effort)
+        add = req.get("additionalModelRequestFields", {})
+        ok = (add.get("thinking", {}).get("type") == "adaptive"
+              and add.get("output_config", {}).get("effort") == effort)
+        check(f"effort={effort} -> adaptive", ok, f"got {add}")
+
+    req, _ = convert(model=CURRENT_CLAUDE, reasoning_effort="low")
+    cfg = req["inferenceConfig"]
+    check("no budget_tokens in adaptive shape",
+          "budget_tokens" not in req["additionalModelRequestFields"]["thinking"],
+          f"got {req['additionalModelRequestFields']}")
+    check("no temperature on a sampling-deprecated model", "temperature" not in cfg, f"got {cfg}")
+    check("topP dropped", "topP" not in cfg, f"got {cfg}")
+
+    print("   an effort the schema allows but Bedrock wouldn't know falls back to medium")
+    # The schema constrains reasoning_effort, so bypass it to exercise the
+    # converter's own guard (which protects against a future schema widening).
+    req, request = convert(model=CURRENT_CLAUDE, reasoning_effort="low")
+    object.__setattr__(request, "reasoning_effort", "turbo")
+    converter = OpenAIToBedrockConverter()
+    req = converter.convert_request(request)
+    check("unknown effort -> medium",
+          req["additionalModelRequestFields"]["output_config"]["effort"] == "medium",
+          f"got {req.get('additionalModelRequestFields')}")
+
+    print("8. explicit thinking block is passed through verbatim (legacy shape)")
+    req, _ = convert(model=SONNET, thinking={"type": "enabled", "budget_tokens": 10000})
     cfg = req["inferenceConfig"]
     thinking = req.get("additionalModelRequestFields", {}).get("thinking")
-    check("thinking enabled for claude", bool(thinking),
+    check("legacy thinking preserved", thinking == {"type": "enabled", "budget_tokens": 10000},
+          f"got {thinking}")
+    check("no output_config added", "output_config" not in req.get("additionalModelRequestFields", {}),
           f"got {req.get('additionalModelRequestFields')}")
-    check("temperature forced to 1.0", cfg.get("temperature") == 1.0, f"got {cfg}")
-    check("topP dropped", "topP" not in cfg, f"got {cfg}")
-    check("maxTokens raised above budget",
-          cfg.get("maxTokens", 0) > thinking.get("budget_tokens", 0) if thinking else False,
-          f"got {cfg}")
+    check("temperature forced to 1.0 (legacy, model accepts it)",
+          cfg.get("temperature") == 1.0, f"got {cfg}")
+    check("maxTokens raised above budget", cfg.get("maxTokens", 0) > 10000, f"got {cfg}")
 
     print()
     if failures:

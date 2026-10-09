@@ -8,12 +8,26 @@ import httpx
 from app.core.config import settings
 from app.schemas.openai import ChatCompletionRequest, Message, Tool
 
-# Reasoning effort to thinking budget_tokens mapping
+# Reasoning effort -> thinking budget_tokens, for the legacy
+# thinking.type=enabled shape (see ADAPTIVE_THINKING_EFFORTS).
 REASONING_EFFORT_MAP = {
     "low": 1024,
     "medium": 10000,
     "high": 32000,
 }
+
+# Current Claude models (sonnet-5, opus-4-7, opus-4-8, fable-5) REJECT the legacy
+# thinking block:
+#   "thinking.type.enabled" is not supported for this model.
+#   Use "thinking.type.adaptive" and "output_config.effort" ...
+# They take thinking.type=adaptive plus output_config.effort instead. Measured
+# 2026-10-09 (tests/probe_adaptive_thinking.py): every current model accepts the
+# adaptive shape, and the previous generation (sonnet-4-6) accepts BOTH — so the
+# adaptive shape is emitted unconditionally rather than branching per model.
+#
+# Valid effort values, per Bedrock's own error text ("unknown variant `none`,
+# expected one of ..."): low, medium, high, xhigh, max.
+ADAPTIVE_THINKING_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
 # Models that do not support prompt caching
 CACHING_UNSUPPORTED_MODELS = {
@@ -28,13 +42,35 @@ CACHING_UNSUPPORTED_MODELS = {
 # Matched against the RESOLVED Bedrock ID only — never the client-facing alias, which can
 # be named anything (a GPT model mapped as "claude-astra", or a Claude model behind an
 # alias containing "gpt").
+# Claude models that deprecated inferenceConfig sampling params: they accept
+# temperature=1.0 (the no-op) but reject any other value, and reject topP outright
+# ("`temperature` is deprecated for this model"). Measured 2026-10-09 across
+# sonnet-5 / opus-4-7 / opus-4-8 / fable-5; the previous generation (sonnet-4-6 and
+# older) still accepts both. Matched against the RESOLVED Bedrock ID.
+SAMPLING_DEPRECATED_MODEL_MARKERS = {
+    "claude-sonnet-5",
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-fable-5",
+}
+
 OPENAI_FAMILY_MODEL_MARKERS = {
     "openai.",
     "gpt-",
 }
 
 # Per-model minimum cacheable token thresholds (Bedrock actual, not documented)
+# Per-model minimum cacheable token thresholds (Bedrock actual, not documented).
+# Below the threshold Bedrock silently ignores an injected cachePoint — no error,
+# just a cache write you pay for that never gets read. Measured with
+# tests/probe_cache_threshold.py; run it when adding a model.
 MODEL_CACHE_MIN_TOKENS = {
+    # Current generation (measured 2026-10-09)
+    "claude-opus-4-7": 4096,   # verified: ~4050 tokens not cached, ~4764 cached
+    "claude-opus-4-8": 1024,   # caches from ~1672 tokens
+    "claude-sonnet-5": 1024,
+    "claude-fable-5": 1024,
+    # Previous generation
     "claude-sonnet-4-5": 1024,
     "claude-sonnet-4-6": 2048,
     "claude-opus-4-5": 4096,
@@ -95,33 +131,61 @@ class OpenAIToBedrockConverter:
             if self._model_supports_caching(request.model, self._resolved_model_id):
                 self._apply_explicit_cache_control(bedrock_request, request, cache_ttl)
 
-        # Extended thinking: explicit thinking takes precedence over reasoning_effort
-        thinking_config = None
-        if request.thinking and settings.enable_extended_thinking:
-            thinking_config = request.thinking
-        elif request.reasoning_effort and settings.enable_extended_thinking:
-            budget = REASONING_EFFORT_MAP.get(request.reasoning_effort, 10000)
-            thinking_config = {"type": "enabled", "budget_tokens": budget}
-
-        # Drop it entirely for GPT models: the thinking block is Anthropic-shaped and
-        # would be rejected. They reason on their own without it.
-        if thinking_config and not self._model_supports_anthropic_thinking(self._resolved_model_id or ""):
-            thinking_config = None
-
-        if thinking_config:
-            additional = bedrock_request.get("additionalModelRequestFields", {})
-            additional["thinking"] = thinking_config
-            bedrock_request["additionalModelRequestFields"] = additional
-            # Extended thinking requires temperature=1 and no top_p
-            bedrock_request["inferenceConfig"].pop("topP", None)
-            bedrock_request["inferenceConfig"]["temperature"] = 1.0
-            # max_tokens must be > budget_tokens
-            budget = thinking_config.get("budget_tokens", 0)
-            current_max = bedrock_request["inferenceConfig"].get("maxTokens", 4096)
-            if current_max <= budget:
-                bedrock_request["inferenceConfig"]["maxTokens"] = budget + 4096
+        # Extended thinking. Current models want thinking.type=adaptive +
+        # output_config.effort; the legacy enabled/budget_tokens pair is only used
+        # when the client asked for it explicitly (and is rejected by current
+        # models, which is the client's choice to make).
+        self._apply_thinking(bedrock_request, request)
 
         return bedrock_request
+
+    def _apply_thinking(self, bedrock_request: dict, request: ChatCompletionRequest) -> None:
+        """Attach extended-thinking fields, in the shape this model accepts."""
+        if not settings.enable_extended_thinking:
+            return
+
+        # GPT models reason on their own and reject the Anthropic thinking block.
+        if not self._model_supports_anthropic_thinking(self._resolved_model_id or ""):
+            return
+
+        inference = bedrock_request["inferenceConfig"]
+
+        # An explicit client-supplied thinking block is passed through verbatim —
+        # the caller may be targeting a model that still takes the legacy shape.
+        if request.thinking:
+            additional = bedrock_request.get("additionalModelRequestFields", {})
+            additional["thinking"] = request.thinking
+            bedrock_request["additionalModelRequestFields"] = additional
+            inference.pop("topP", None)
+            budget = 0
+            if isinstance(request.thinking, dict):
+                budget = request.thinking.get("budget_tokens", 0) or 0
+            if budget:
+                # Legacy shape: temperature must be 1 and max_tokens > budget.
+                # Only set temperature on models that still accept the field.
+                if self._model_supports_sampling_params(self._resolved_model_id or ""):
+                    inference["temperature"] = 1.0
+                if inference.get("maxTokens", 4096) <= budget:
+                    inference["maxTokens"] = budget + 4096
+            return
+
+        if not request.reasoning_effort:
+            return
+
+        # reasoning_effort -> adaptive thinking. Pass the effort straight through
+        # when Bedrock knows it (low/medium/high/xhigh/max), so "xhigh" and "max"
+        # work even though OpenAI's own vocabulary stops at "high".
+        effort = request.reasoning_effort.lower()
+        if effort not in ADAPTIVE_THINKING_EFFORTS:
+            effort = "medium"
+        additional = bedrock_request.get("additionalModelRequestFields", {})
+        additional["thinking"] = {"type": "adaptive"}
+        additional["output_config"] = {"effort": effort}
+        bedrock_request["additionalModelRequestFields"] = additional
+        # Thinking is incompatible with topP. temperature is left alone: the
+        # adaptive shape carries no budget_tokens, and current models reject the
+        # field anyway (_model_supports_sampling_params already gates it).
+        inference.pop("topP", None)
 
     def _convert_model_id(self, openai_model_id: str) -> str:
         """Convert OpenAI model ID to Bedrock model ID."""
@@ -362,8 +426,18 @@ class OpenAIToBedrockConverter:
         return any(marker in model for marker in OPENAI_FAMILY_MODEL_MARKERS)
 
     def _model_supports_sampling_params(self, bedrock_model: str) -> bool:
-        """GPT models are reasoning-only: "This model doesn't support the temperature field"."""
-        return not self._is_openai_family(bedrock_model)
+        """Whether temperature / topP can be sent at all.
+
+        Two families refuse them: GPT models ("This model doesn't support the
+        temperature field") and current Claude models, which deprecated both
+        ("`temperature` is deprecated for this model"). The latter tolerate
+        temperature=1.0, but that is the default anyway, so omitting it is
+        equivalent and keeps any other client-sent value from 400ing.
+        """
+        if self._is_openai_family(bedrock_model):
+            return False
+        model = (bedrock_model or "").lower()
+        return not any(marker in model for marker in SAMPLING_DEPRECATED_MODEL_MARKERS)
 
     def _model_supports_anthropic_thinking(self, bedrock_model: str) -> bool:
         """additionalModelRequestFields.thinking is Anthropic-specific.

@@ -477,15 +477,20 @@ def test_reasoning_effort_low() -> TestResult:
     body = parse_json(r["body"])
     assertions = []
     assertions.append(Assertion("Returns 200", r["http_code"] == 200))
-    has_thinking = False
+    # Current models use thinking.type=adaptive, where exposing a reasoningContent
+    # block is the MODEL's choice — measured non-deterministic per request
+    # (tests/probe_reasoning_block.py). So assert the field is well-formed when
+    # present rather than requiring it.
+    thinking_well_formed = True
     has_answer = False
     if body and body.get("choices"):
         msg = body["choices"][0].get("message", {})
         thinking = msg.get("thinking")
-        has_thinking = thinking is not None and len(thinking) > 0
+        if thinking is not None:
+            thinking_well_formed = isinstance(thinking, str) and len(thinking) > 0
         content = msg.get("content", "")
         has_answer = "12" in content
-    assertions.append(Assertion("Has thinking field", has_thinking))
+    assertions.append(Assertion("thinking field well-formed if present", thinking_well_formed))
     assertions.append(Assertion("Has correct answer (12)", has_answer))
     return TestResult(
         name="Reasoning Effort: low",
@@ -512,15 +517,18 @@ def test_reasoning_effort_high() -> TestResult:
     body = parse_json(r["body"])
     assertions = []
     assertions.append(Assertion("Returns 200", r["http_code"] == 200))
-    has_thinking = False
+    # See the note in test_reasoning_effort_low: with adaptive thinking the
+    # reasoningContent block is emitted at the model's discretion.
+    thinking_well_formed = True
     has_answer = False
     if body and body.get("choices"):
         msg = body["choices"][0].get("message", {})
         thinking = msg.get("thinking")
-        has_thinking = thinking is not None and len(thinking) > 0
+        if thinking is not None:
+            thinking_well_formed = isinstance(thinking, str) and len(thinking) > 0
         content = msg.get("content", "")
         has_answer = "391" in content
-    assertions.append(Assertion("Has thinking field", has_thinking))
+    assertions.append(Assertion("thinking field well-formed if present", thinking_well_formed))
     assertions.append(Assertion("Has answer 391", has_answer))
     return TestResult(
         name="Reasoning Effort: high",
@@ -541,21 +549,29 @@ def test_extended_thinking() -> TestResult:
         "model": MODEL,
         "messages": [{"role": "user", "content": "What is 15 + 27?"}],
         "max_tokens": 2000,
-        "thinking": {"type": "enabled", "budget_tokens": 1024},
+        # Current models reject thinking.type=enabled ('Use "thinking.type.adaptive"
+        # and "output_config.effort"'). An explicit block is passed through verbatim
+        # by design, so use the shape these models accept.
+        "thinking": {"type": "adaptive"},
     }
     r = curl_request(f"{API_BASE_URL}/v1/chat/completions", method="POST", data=payload)
     body = parse_json(r["body"])
     assertions = []
     assertions.append(Assertion("Returns 200", r["http_code"] == 200))
-    has_thinking = False
+    thinking_well_formed = True
+    has_answer = False
     if body and body.get("choices"):
-        thinking = body["choices"][0].get("message", {}).get("thinking")
-        has_thinking = thinking is not None and len(thinking) > 0
-    assertions.append(Assertion("Has thinking content", has_thinking))
+        msg = body["choices"][0].get("message", {})
+        thinking = msg.get("thinking")
+        if thinking is not None:
+            thinking_well_formed = isinstance(thinking, str) and len(thinking) > 0
+        has_answer = "42" in (msg.get("content") or "")
+    assertions.append(Assertion("thinking field well-formed if present", thinking_well_formed))
+    assertions.append(Assertion("Has answer 42", has_answer))
     return TestResult(
         name="Extended Thinking (explicit)",
         category="Reasoning",
-        description="Verify explicit thinking param enables extended thinking",
+        description="Verify an explicit thinking param is passed through and accepted",
         passed=all(a.passed for a in assertions),
         assertions=assertions,
         duration_ms=r["elapsed_ms"],
